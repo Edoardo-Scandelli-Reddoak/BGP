@@ -18,7 +18,10 @@ export type HistoryFilters = {
   agente?: number | "nessuno";
   /** Paese del contatto, oppure "nessuno" per i contatti senza paese. */
   paese?: string;
+  /** Marchio di almeno un prodotto della richiesta, oppure "nessuno": almeno un prodotto senza marchio. */
   marchio?: string;
+  /** Categoria di almeno un prodotto della richiesta, oppure "nessuno": almeno un prodotto senza categoria. */
+  categoria?: string;
   origine?: RequestSourceFilter;
 };
 
@@ -65,6 +68,8 @@ export function parseHistoryFilters(input: URLSearchParams | Record<string, stri
   if (paese) f.paese = paese.slice(0, MAX_TEXT);
   const marchio = get("marchio");
   if (marchio) f.marchio = marchio.slice(0, MAX_TEXT);
+  const categoria = get("categoria");
+  if (categoria) f.categoria = categoria.slice(0, MAX_TEXT);
 
   const origine = get("origine");
   if (origine === "INTERNO" || origine === "MODULO_PUBBLICO") f.origine = origine;
@@ -82,6 +87,7 @@ export function historyFiltersToParams(f: HistoryFilters): Record<string, string
     agente: f.agente === undefined ? undefined : String(f.agente),
     paese: f.paese,
     marchio: f.marchio,
+    categoria: f.categoria,
     origine: f.origine,
   };
 }

@@ -8,22 +8,22 @@ import {
 } from "@/components/impostazioni/crm-export-settings-form";
 import { Alert } from "@/components/ui/alert";
 import { requireUser } from "@/lib/auth/session";
-import { DEFAULT_CRM_EXPORT_CONFIG, type CrmExportConfig, type CrmGroupBy } from "@/lib/config/crm-export";
+import { CRM_COLUMNS, CRM_GROUPS, DEFAULT_CRM_EXPORT_CONFIG, type CrmExportConfig } from "@/lib/config/crm-export";
 import { getCrmExportRows, previousMonthIso, recentCrmExportRuns } from "@/lib/crm-export/run";
 import { formatMonth, todayIso } from "@/lib/format";
 import { addMonths, firstParam, isIsoMonth } from "@/lib/reports/period";
+import { getProductLabelCoverage } from "@/lib/reports/product-labels";
 import { getSetting } from "@/lib/settings";
 
 export const metadata: Metadata = { title: "Export CRM — Impostazioni" };
 
-const GROUPS: CrmGroupBy[] = ["PRODOTTO", "PRODOTTO_CLIENTE", "CLIENTE", "AGENTE"];
 const PREVIEW_LIMIT = 8;
 
 /** Righe dell'anteprima per ogni raggruppamento: il form le mostra subito anche cambiando raggruppamento. */
 async function previewData(month: string, config: CrmExportConfig): Promise<CrmPreviewData> {
-  const all = await Promise.all(GROUPS.map((groupBy) => getCrmExportRows(month, { ...config, groupBy })));
+  const all = await Promise.all(CRM_GROUPS.map((groupBy) => getCrmExportRows(month, { ...config, groupBy })));
   return Object.fromEntries(
-    GROUPS.map((g, i) => [g, { rows: all[i].slice(0, PREVIEW_LIMIT), total: all[i].length }]),
+    CRM_GROUPS.map((g, i) => [g, { rows: all[i].slice(0, PREVIEW_LIMIT), total: all[i].length }]),
   ) as CrmPreviewData;
 }
 
@@ -55,7 +55,11 @@ export default async function CrmExportSettingsPage({ searchParams }: PageProps<
   const previewMonth = isIsoMonth(requested) && requested <= currentMonth ? requested : previousMonth;
 
   const config = await getSetting("crmExport");
-  const [preview, runs] = await Promise.all([previewData(previewMonth, config), recentCrmExportRuns(12)]);
+  const [preview, runs, labelCoverage] = await Promise.all([
+    previewData(previewMonth, config),
+    recentCrmExportRuns(12),
+    getProductLabelCoverage(),
+  ]);
   const sentPeriods = new Set(runs.map((r) => r.period));
   const runRows: CrmRunRow[] = runs.slice(0, 6).map((r) => ({
     id: r.id,
@@ -82,9 +86,13 @@ export default async function CrmExportSettingsPage({ searchParams }: PageProps<
             .
           </li>
           <li>
+            Marchio e categoria sono quelli dell&apos;anagrafica prodotti: si possono mettere come colonne del file per
+            prodotto oppure usare come raggruppamento («Per marchio», «Per categoria»).
+          </li>
+          <li>
             {isDefault ? "Impostazione attuale: " : "Impostazione iniziale: "}
-            CSV con «;» e virgola decimale, una riga per prodotto (Codice, Descrizione, Marchio, Richieste, Pezzi, m2),
-            nessun invio automatico.
+            CSV con «;» e virgola decimale, una riga per prodotto (
+            {DEFAULT_CRM_EXPORT_CONFIG.columns.map((c) => CRM_COLUMNS[c]).join(", ")}), nessun invio automatico.
           </li>
         </ul>
       </Alert>
@@ -100,6 +108,7 @@ export default async function CrmExportSettingsPage({ searchParams }: PageProps<
         schedulerEnabled={process.env.SCHEDULER_ENABLED !== "false"}
         nextRun={nextRunText(config, today, sentPeriods)}
         runs={runRows}
+        labeledProducts={{ brand: labelCoverage.brand, category: labelCoverage.category }}
       />
     </>
   );

@@ -35,5 +35,11 @@ e i due PDF di analisi nella cartella superiore.
 - Configurazioni di BGP (Impostazioni → Costi, Bolla di consegna, Export CRM): tipi, valori predefiniti e logica pura
   in `src/lib/config/`, lette con `getSettings()`/`getSetting()`; costi in SQL in `src/lib/requests/costs.ts`,
   export e invio mensile in `src/lib/crm-export/run.ts` (scheduler in `src/instrumentation.ts`).
+- Paesi: ogni paese salvato (contatti, richieste, modulo pubblico, import) passa da `normalizeCountry` in
+  `src/lib/countries.ts` (nome italiano; sigle ISO e nomi in altre lingue riconosciuti); `isAbroad` usa `isItaly`.
+- Marchio e categoria dei prodotti: testo libero ma allineato ai valori esistenti (`src/lib/products/labels.ts`,
+  puro; `labels-db.ts` per assegnazione in blocco, rinomina/unione, rimozione). Filtro «senza» = `MISSING_LABEL_FILTER` («-»).
+- Export Excel delle anagrafiche nel formato dell'import (`src/lib/exports/`): ogni colonna esportata deve tornare
+  invariata con l'import (test di andata e ritorno in `tests/unit/registry-xlsx.test.ts`).
 - Componenti UI condivisi in `src/components/ui/`; formattazione (date, m², euro, codice richiesta) in `src/lib/format.ts`.
 - Dopo aver aggiunto route: `npx next typegen` per i tipi `PageProps<"/percorso">`.

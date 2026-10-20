@@ -12,6 +12,8 @@ import {
   type ContactType,
   type Language,
 } from "@/db/schema";
+import { MISSING_LABEL_FILTER } from "@/lib/products/labels";
+import { distinctLabels, labelMissing } from "@/lib/products/labels-db";
 import { likePattern } from "@/lib/search";
 import { SHIPPED_STATUSES } from "@/lib/status";
 import { parseDbId } from "@/lib/validation";
@@ -61,7 +63,7 @@ export function parseContactFilters(sp: Params): ContactFilters {
   };
 }
 
-function contactWhere(f: ContactFilters): SQL | undefined {
+export function contactWhere(f: ContactFilters): SQL | undefined {
   const conds: SQL[] = [];
   for (const w of words(f.q)) {
     const p = likePattern(w);
@@ -220,7 +222,9 @@ export type ProductFilters = {
   q: string;
   /** "" tutti (predefinito), "1" solo attivi, "0" solo disattivati. */
   active: "" | "1" | "0";
+  /** valore del marchio, oppure "-" (MISSING_LABEL_FILTER) per i prodotti senza marchio. */
   brand: string | null;
+  /** valore della categoria, oppure "-" per i prodotti senza categoria. */
   category: string | null;
   sort: ProductSort;
 };
@@ -237,14 +241,17 @@ export function parseProductFilters(sp: Params): ProductFilters {
   };
 }
 
-function productWhere(f: ProductFilters): SQL | undefined {
+export function productWhere(f: ProductFilters): SQL | undefined {
   const conds: SQL[] = words(f.q).map(
     (w) => or(ilike(products.code, likePattern(w)), ilike(products.description, likePattern(w)))!,
   );
   if (f.active === "1") conds.push(eq(products.active, true));
   else if (f.active === "0") conds.push(eq(products.active, false));
-  if (f.brand) conds.push(eq(products.brand, f.brand));
-  if (f.category) conds.push(eq(products.category, f.category));
+  // "-" = senza marchio / senza categoria (null, vuoto o solo spazi)
+  if (f.brand === MISSING_LABEL_FILTER) conds.push(labelMissing("brand"));
+  else if (f.brand) conds.push(eq(products.brand, f.brand));
+  if (f.category === MISSING_LABEL_FILTER) conds.push(labelMissing("category"));
+  else if (f.category) conds.push(eq(products.category, f.category));
   return conds.length ? and(...conds) : undefined;
 }
 
@@ -301,19 +308,8 @@ export async function listProducts(f: ProductFilters, page: number) {
 
 /** Valori già usati per marchio e categoria (filtri e suggerimenti). */
 export async function listProductFacets() {
-  const [brands, categories] = await Promise.all([
-    db
-      .selectDistinct({ v: products.brand })
-      .from(products)
-      .where(and(isNotNull(products.brand), ne(products.brand, "")))
-      .orderBy(asc(products.brand)),
-    db
-      .selectDistinct({ v: products.category })
-      .from(products)
-      .where(and(isNotNull(products.category), ne(products.category, "")))
-      .orderBy(asc(products.category)),
-  ]);
-  return { brands: brands.map((r) => r.v!), categories: categories.map((r) => r.v!) };
+  const [brands, categories] = await Promise.all([distinctLabels("brand"), distinctLabels("category")]);
+  return { brands, categories };
 }
 
 export const getProductDetail = cache(async (id: number) => {

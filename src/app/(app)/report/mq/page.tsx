@@ -14,8 +14,10 @@ import type { RequestStatus } from "@/db/schema";
 import { requireUser } from "@/lib/auth/session";
 import { CRM_COLUMNS, CRM_GROUP_BY_LABELS, crmFileName, type CrmExportConfig } from "@/lib/config/crm-export";
 import { currentMonthIso, formatDate, formatM2, formatMonth, requestCode } from "@/lib/format";
-import { getMonthlyM2Report, type M2Shipment } from "@/lib/reports/m2";
+import { MISSING_LABEL_FILTER } from "@/lib/products/labels";
+import { getMonthlyM2Report, type M2LabelRow, type M2Shipment } from "@/lib/reports/m2";
 import { addMonths, firstParam, isIsoMonth, recentMonths } from "@/lib/reports/period";
+import { getProductLabelCoverage } from "@/lib/reports/product-labels";
 import { can, canViewRequestInStatus } from "@/lib/roles";
 import { getSetting } from "@/lib/settings";
 
@@ -73,7 +75,13 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
   const requested = firstParam(sp.mese);
   const month = isIsoMonth(requested) ? requested : current;
 
-  const [report, crmExport] = await Promise.all([getMonthlyM2Report(month), getSetting("crmExport")]);
+  const [report, crmExport, labelCoverage] = await Promise.all([
+    getMonthlyM2Report(month),
+    getSetting("crmExport"),
+    getProductLabelCoverage(),
+  ]);
+  // il link ai prodotti senza marchio/categoria solo per chi vede l'anagrafica (non l'ufficio CRM)
+  const canViewRegistry = can(user.role, "registry.view");
   const exportInfo = describeCrmExport(crmExport, month);
   // Spedite senza data di spedizione: il report le conta nel mese della data di ritiro.
   const countedByPickup = report.shipments.filter((s) => s.pickupDateUsed);
@@ -156,7 +164,12 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
             <p className="mt-0.5 text-xs break-words text-slate-500">
               {exportInfo.details} · {exportInfo.sending}
             </p>
-            {crmExport.groupBy !== "PRODOTTO" ? (
+            {crmExport.groupBy === "MARCHIO" || crmExport.groupBy === "CATEGORIA" ? (
+              <p className="mt-0.5 text-xs text-slate-500">
+                Il file è raggruppato {CRM_GROUP_BY_LABELS[crmExport.groupBy].toLowerCase()}: le righe coincidono con il
+                riepilogo «Per marchio e categoria» qui sotto.
+              </p>
+            ) : crmExport.groupBy !== "PRODOTTO" ? (
               <p className="mt-0.5 text-xs text-slate-500">
                 Il file è raggruppato {CRM_GROUP_BY_LABELS[crmExport.groupBy].toLowerCase()}: le righe non coincidono con la
                 tabella per prodotto qui sotto (i totali di m² e pezzi sì).
@@ -245,6 +258,7 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
                       <TH>Codice</TH>
                       <TH>Descrizione</TH>
                       <TH>Marchio</TH>
+                      <TH>Categoria</TH>
                       <TH className="text-right">Richieste</TH>
                       <TH className="text-right">Pezzi</TH>
                       <TH className="text-right">m²</TH>
@@ -260,6 +274,7 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
                           </span>
                         </TD>
                         <TD className="whitespace-nowrap">{r.brand || <span className="text-slate-400">—</span>}</TD>
+                        <TD className="whitespace-nowrap">{r.category || <span className="text-slate-400">—</span>}</TD>
                         <TD className="text-right tabular-nums">{r.requests}</TD>
                         <TD className="text-right tabular-nums">{r.pieces}</TD>
                         <TD className="whitespace-nowrap text-right font-medium tabular-nums text-slate-900">{formatM2(r.m2)}</TD>
@@ -268,7 +283,7 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
                   </TBody>
                   <tfoot className="border-t-2 border-slate-200 bg-slate-50">
                     <tr>
-                      <th scope="row" colSpan={3} className="px-4 py-3 text-left text-sm font-semibold text-slate-900">
+                      <th scope="row" colSpan={4} className="px-4 py-3 text-left text-sm font-semibold text-slate-900">
                         Totale {monthLabel}
                       </th>
                       <td className="px-4 py-3 text-right text-sm font-semibold tabular-nums">{report.totals.requests}</td>
@@ -291,9 +306,15 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
                         <span className="whitespace-nowrap font-semibold tabular-nums text-slate-900">{formatM2(r.m2)}</span>
                       </div>
                       {r.description ? <p className="mt-0.5 line-clamp-2 text-sm text-slate-600">{r.description}</p> : null}
-                      <p className="mt-1 text-xs text-slate-500">
-                        {r.brand ? `${r.brand} · ` : ""}
-                        {r.requests} richiest{r.requests === 1 ? "a" : "e"} · {r.pieces} pezz{r.pieces === 1 ? "o" : "i"}
+                      <p className="mt-1 text-xs break-words text-slate-500">
+                        {[
+                          r.brand,
+                          r.category,
+                          `${r.requests} richiest${r.requests === 1 ? "a" : "e"}`,
+                          `${r.pieces} pezz${r.pieces === 1 ? "o" : "i"}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </p>
                     </li>
                   ))}
@@ -312,6 +333,29 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
             </>
           )}
         </Card>
+
+        {report.rows.length > 0 ? (
+          <Card>
+            <CardHeader
+              title={<span>Per marchio e categoria · <span className="capitalize">{monthLabel}</span></span>}
+              description="Dall'anagrafica prodotti. Una richiesta con prodotti di più marchi (o categorie) conta per ciascuno."
+            />
+            <div className="grid grid-cols-1 divide-y divide-slate-100 md:grid-cols-2 md:divide-x md:divide-y-0">
+              <LabelSummary
+                field="marchio"
+                rows={report.byBrand}
+                labeled={labelCoverage.brand > 0}
+                canViewRegistry={canViewRegistry}
+              />
+              <LabelSummary
+                field="categoria"
+                rows={report.byCategory}
+                labeled={labelCoverage.category > 0}
+                canViewRegistry={canViewRegistry}
+              />
+            </div>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader
@@ -384,5 +428,64 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
         </Card>
       </div>
     </>
+  );
+}
+
+/**
+ * m² del mese per marchio o per categoria. Finché nessun prodotto in anagrafica ha un valore, al posto
+ * dell'unica riga «Non indicato» spiega perché (con il link ai prodotti da completare per chi vede l'anagrafica).
+ */
+function LabelSummary({
+  field,
+  rows,
+  labeled,
+  canViewRegistry,
+}: {
+  field: "marchio" | "categoria";
+  rows: M2LabelRow[];
+  labeled: boolean;
+  canViewRegistry: boolean;
+}) {
+  const brand = field === "marchio";
+  return (
+    <section className="min-w-0 px-5 py-4" aria-labelledby={`riepilogo-${field}`}>
+      <h3 id={`riepilogo-${field}`} className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Per {field}
+      </h3>
+      {labeled ? (
+        <ul className="mt-1 divide-y divide-slate-100">
+          {rows.map((r) => (
+            <li key={r.label ?? ""} className="flex items-baseline justify-between gap-3 py-2">
+              <span className="min-w-0">
+                <span className={cn("block break-words text-sm font-medium", r.label ? "text-slate-900" : "text-slate-500")}>
+                  {r.label ?? "Non indicato"}
+                </span>
+                <span className="block text-xs text-slate-500">
+                  {r.requests} richiest{r.requests === 1 ? "a" : "e"} · {r.pieces} pezz{r.pieces === 1 ? "o" : "i"} ·{" "}
+                  {r.products} prodott{r.products === 1 ? "o" : "i"}
+                </span>
+              </span>
+              <span className="whitespace-nowrap text-sm font-semibold tabular-nums text-slate-900">{formatM2(r.m2)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-2 space-y-1 text-sm">
+          <p className="text-slate-700">
+            {brand ? "Marchio non ancora indicato" : "Categoria non ancora indicata"} nell&apos;anagrafica prodotti.
+          </p>
+          {canViewRegistry ? (
+            <Link
+              href={`/anagrafiche/prodotti?${field}=${MISSING_LABEL_FILTER}`}
+              className="inline-block font-medium text-brand-700 hover:text-brand-900 hover:underline"
+            >
+              Vedi i prodotti {brand ? "senza marchio" : "senza categoria"}
+            </Link>
+          ) : (
+            <p className="text-xs text-slate-500">{brand ? "Lo" : "La"} assegna il back office dall&apos;anagrafica prodotti.</p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

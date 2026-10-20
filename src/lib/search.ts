@@ -9,15 +9,25 @@ export function likePattern(q: string): string {
   return `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
 
-/** Ogni parola deve comparire nel codice o nella descrizione ("rovere spazzolato 190"). */
+/** Ogni parola deve comparire nel codice, nella descrizione, nel marchio o nella categoria ("rovere spazzolato 190", "gaia legno"). */
 export async function searchProducts(q: string, opts: { onlyActive?: boolean; limit?: number } = {}): Promise<ProductOption[]> {
   const words = q.trim().split(/\s+/).filter(Boolean).slice(0, 6);
   if (words.length === 0) return [];
-  const conds: SQL[] = words.map((w) => or(ilike(products.code, likePattern(w)), ilike(products.description, likePattern(w)))!);
+  const conds: SQL[] = words.map((w) => {
+    const p = likePattern(w);
+    return or(ilike(products.code, p), ilike(products.description, p), ilike(products.brand, p), ilike(products.category, p))!;
+  });
   if (opts.onlyActive) conds.push(eq(products.active, true));
   const first = words[0];
   return db
-    .select({ id: products.id, code: products.code, description: products.description, active: products.active })
+    .select({
+      id: products.id,
+      code: products.code,
+      description: products.description,
+      brand: products.brand,
+      category: products.category,
+      active: products.active,
+    })
     .from(products)
     .where(and(...conds))
     // prima le corrispondenze esatte o iniziali sul codice

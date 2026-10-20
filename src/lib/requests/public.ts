@@ -14,6 +14,7 @@ import {
   type Language,
 } from "@/db/schema";
 import { fail, zodFieldErrors, type ActionResult } from "@/lib/action-result";
+import { ITALY, normalizeCountry } from "@/lib/countries";
 import { isValidEmail, parseEmailList } from "@/lib/email/recipients";
 import { formatDate, LANGUAGE_LABELS, requestCode } from "@/lib/format";
 import { looksLikeCompany, SAMPLE_FORMATS } from "@/lib/sample-formats";
@@ -168,7 +169,8 @@ export const publicRequestInput = z.object({
     // Senza CAP né numero civico il corriere non consegna.
     .refine((v) => /\d/.test(v), "Indica l'indirizzo completo: via e numero civico, CAP, città e provincia")
     .transform(normalizeMultiline),
-  country: optionalText(80),
+  /** Paese di consegna: se riconosciuto («France», «CH»…) salvato col nome italiano, altrimenti com'è scritto. */
+  country: optionalText(80).transform(normalizeCountry),
   language: z.enum(languageEnum.enumValues, { error: "Seleziona la lingua" }),
   /** Preavviso telefonico prima della consegna: nessun valore predefinito, va scelto. */
   phoneNotice: z.boolean({ error: "Indica se serve il preavviso telefonico prima della consegna" }),
@@ -498,7 +500,7 @@ export async function createPublicRequest(
     // Paese di consegna in un campo a parte (l'indirizzo resta com'è stato scritto); se non indicato
     // vale quello del contatto, come nel back office. Le regole della bolla si applicano subito.
     // Il modulo propone «Italia»: un campo svuotato vale come paese del contatto, se noto.
-    const destinationCountry = input.country ?? contact.country ?? "Italia";
+    const destinationCountry = input.country ?? normalizeCountry(contact.country) ?? ITALY;
     const bolla = applyBollaRules(
       false,
       { destinationCountry, itemFormats: items.map((i) => i.sampleFormat), packagesCount: null },

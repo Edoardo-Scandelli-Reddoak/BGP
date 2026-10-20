@@ -15,9 +15,12 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import type { RequestStatus } from "@/db/schema";
 import { requireUser } from "@/lib/auth/session";
 import { formatEuro, formatM2, formatNumber, todayIso } from "@/lib/format";
+import { MISSING_LABEL_FILTER } from "@/lib/products/labels";
 import {
   dashboardCostComponents,
   getByAgent,
+  getByBrand,
+  getByCategory,
   getByContact,
   getByCountry,
   getByProduct,
@@ -26,9 +29,11 @@ import {
   getStatusDistribution,
   type CostComponent,
   type CostSummary,
+  type LabelRow,
 } from "@/lib/reports/dashboard";
 import { NONE_VALUE, toQueryString } from "@/lib/reports/history-filters";
 import { DEFAULT_PRESET, firstParam, resolvePeriod } from "@/lib/reports/period";
+import { getProductLabelCoverage } from "@/lib/reports/product-labels";
 import { countByStatus } from "@/lib/requests/service";
 import { can, type Permission } from "@/lib/roles";
 import { getSetting } from "@/lib/settings";
@@ -41,7 +46,7 @@ const TOP = 15;
 const MAX_COST_COLUMNS = 3;
 /** Pagina delle impostazioni con le voci di costo (solo amministratori). */
 const COSTS_SETTINGS_HREF = "/impostazioni/costi";
-const BREAKDOWNS = ["clienti", "prodotti", "paesi", "agenti"] as const;
+const BREAKDOWNS = ["clienti", "prodotti", "marchi", "categorie", "paesi", "agenti"] as const;
 type Breakdown = (typeof BREAKDOWNS)[number];
 
 /** Vista di lavoro di ciascuno stato aperto (se il ruolo non la vede, si apre lo storico filtrato). */
@@ -70,16 +75,20 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
   const costColumns = costComponents.length > 1 && costComponents.length <= MAX_COST_COLUMNS ? costComponents : [];
   const costPartsOnSecondLine = costComponents.length > MAX_COST_COLUMNS;
 
-  const [kpi, statusCounts, series, openCounts, byContact, byProduct, byCountry, byAgent] = await Promise.all([
-    getDashboardKpi(period, costConfig),
-    getStatusDistribution(period),
-    getMonthlySeries(period),
-    countByStatus(),
-    getByContact(period, limitFor("clienti"), costConfig),
-    getByProduct(period, limitFor("prodotti")),
-    getByCountry(period, limitFor("paesi"), costConfig),
-    getByAgent(period, limitFor("agenti")),
-  ]);
+  const [kpi, statusCounts, series, openCounts, byContact, byProduct, byBrand, byCategory, labelCoverage, byCountry, byAgent] =
+    await Promise.all([
+      getDashboardKpi(period, costConfig),
+      getStatusDistribution(period),
+      getMonthlySeries(period),
+      countByStatus(),
+      getByContact(period, limitFor("clienti"), costConfig),
+      getByProduct(period, limitFor("prodotti")),
+      getByBrand(period, limitFor("marchi")),
+      getByCategory(period, limitFor("categorie")),
+      getProductLabelCoverage(),
+      getByCountry(period, limitFor("paesi"), costConfig),
+      getByAgent(period, limitFor("agenti")),
+    ]);
 
   // parametri del periodo da conservare nei link (nessuno per il periodo predefinito)
   const periodParams = period.preset === DEFAULT_PRESET ? {} : { da: period.da, a: period.a };
@@ -87,6 +96,9 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
   const storico = (extra: Record<string, string | undefined>) => `/direzione/storico${toQueryString(extra)}`;
   const toggleHref = (b: Breakdown) =>
     `/direzione${toQueryString({ ...periodParams, tutti: expanded === b ? undefined : b })}#${b}`;
+
+  // marchio e categoria: finché nessun prodotto li ha, al posto della tabella un invito a compilarli
+  const registryAccess = can(user.role, "registry.edit") ? "edit" : can(user.role, "registry.view") ? "view" : null;
 
   const canEditCosts = can(user.role, "settings.manage");
   const costsSettings = canEditCosts ? (
@@ -373,6 +385,42 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <BreakdownCard
+            id="marchi"
+            title="Per marchio"
+            description="Marchio dei prodotti richiesti · una richiesta con più marchi conta per ciascuno"
+            total={byBrand.total}
+            shown={byBrand.rows.length}
+            expanded={expanded === "marchi"}
+            toggleHref={toggleHref("marchi")}
+            notice={
+              labelCoverage.brand === 0 ? <MissingLabelNotice field="marchio" access={registryAccess} /> : undefined
+            }
+          >
+            <LabelTable heading="Marchio" rows={byBrand.rows} href={(label) => storico({ marchio: label ?? NONE_VALUE })} />
+          </BreakdownCard>
+
+          <BreakdownCard
+            id="categorie"
+            title="Per categoria"
+            description="Categoria dei prodotti richiesti · una richiesta con più categorie conta per ciascuna"
+            total={byCategory.total}
+            shown={byCategory.rows.length}
+            expanded={expanded === "categorie"}
+            toggleHref={toggleHref("categorie")}
+            notice={
+              labelCoverage.category === 0 ? <MissingLabelNotice field="categoria" access={registryAccess} /> : undefined
+            }
+          >
+            <LabelTable
+              heading="Categoria"
+              rows={byCategory.rows}
+              href={(label) => storico({ categoria: label ?? NONE_VALUE })}
+            />
+          </BreakdownCard>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <BreakdownCard
             id="paesi"
             title="Per paese"
             description="Paese del contatto"
@@ -481,6 +529,7 @@ function BreakdownCard({
   shown,
   expanded,
   toggleHref,
+  notice,
   children,
 }: {
   id: Breakdown;
@@ -490,15 +539,23 @@ function BreakdownCard({
   shown: number;
   expanded: boolean;
   toggleHref: string;
+  /** Messaggio al posto della tabella (es. dati non ancora disponibili in anagrafica). */
+  notice?: ReactNode;
   children: ReactNode;
 }) {
-  const canToggle = expanded || total > shown;
+  const canToggle = !notice && (expanded || total > shown);
   return (
     <Card id={id} className="scroll-mt-20">
       <CardHeader
         title={title}
         description={
-          total > shown ? `${description} · primi ${shown} di ${total}` : total > 0 ? `${description} · ${total} in tutto` : description
+          notice
+            ? description
+            : total > shown
+              ? `${description} · primi ${shown} di ${total}`
+              : total > 0
+                ? `${description} · ${total} in tutto`
+                : description
         }
         actions={
           canToggle ? (
@@ -508,7 +565,76 @@ function BreakdownCard({
           ) : null
         }
       />
-      {total === 0 ? <EmptyState title="Nessun dato nel periodo" description="Prova a scegliere un periodo più ampio." /> : children}
+      {notice ?? (total === 0 ? <EmptyState title="Nessun dato nel periodo" description="Prova a scegliere un periodo più ampio." /> : children)}
     </Card>
+  );
+}
+
+/** Tabella per marchio o per categoria; ogni riga apre lo storico filtrato («Non indicato» compreso). */
+function LabelTable({ heading, rows, href }: { heading: string; rows: LabelRow[]; href: (label: string | null) => string }) {
+  return (
+    <Table>
+      <THead>
+        <tr>
+          <TH>{heading}</TH>
+          <TH className="text-right">Richieste</TH>
+          <TH className="text-right">Prodotti</TH>
+          <TH className="text-right">Pezzi</TH>
+          <TH className="text-right">m²</TH>
+        </tr>
+      </THead>
+      <TBody>
+        {rows.map((r) => (
+          <TR key={r.label ?? NONE_VALUE}>
+            <TD className="min-w-40">
+              <Link href={href(r.label)} className="text-brand-700 hover:text-brand-900 hover:underline">
+                {r.label ?? "Non indicato"}
+              </Link>
+            </TD>
+            <TD className="text-right tabular-nums">{r.requests}</TD>
+            <TD className="text-right tabular-nums">{r.products}</TD>
+            <TD className="text-right tabular-nums">{r.pieces}</TD>
+            <TD className="whitespace-nowrap text-right font-medium tabular-nums">{formatM2(r.m2)}</TD>
+          </TR>
+        ))}
+      </TBody>
+    </Table>
+  );
+}
+
+const MISSING_LABEL_TEXT = {
+  marchio: {
+    title: "Marchio non ancora indicato nell'anagrafica prodotti",
+    assign: "Assegna i marchi ai prodotti",
+    view: "Vedi i prodotti senza marchio",
+    byBackOffice: "Lo assegna il back office dall'anagrafica prodotti.",
+  },
+  categoria: {
+    title: "Categoria non ancora indicata nell'anagrafica prodotti",
+    assign: "Assegna le categorie ai prodotti",
+    view: "Vedi i prodotti senza categoria",
+    byBackOffice: "La assegna il back office dall'anagrafica prodotti.",
+  },
+} as const;
+
+/** Nessun prodotto ha ancora un marchio (o una categoria): invito a compilarli, con il link se il ruolo vede l'anagrafica. */
+function MissingLabelNotice({ field, access }: { field: "marchio" | "categoria"; access: "edit" | "view" | null }) {
+  const text = MISSING_LABEL_TEXT[field];
+  return (
+    <CardBody className="space-y-2 text-sm">
+      <p className="font-medium text-slate-900">{text.title}</p>
+      <p className="text-slate-600">
+        Quando i prodotti avranno {field === "marchio" ? "un marchio" : "una categoria"}, qui compariranno richieste,
+        pezzi e m² per {field}.{access === null ? ` ${text.byBackOffice}` : null}
+      </p>
+      {access ? (
+        <Link
+          href={`/anagrafiche/prodotti?${field}=${MISSING_LABEL_FILTER}`}
+          className="inline-block font-medium text-brand-700 hover:text-brand-900 hover:underline"
+        >
+          {access === "edit" ? text.assign : text.view}
+        </Link>
+      ) : null}
+    </CardBody>
   );
 }

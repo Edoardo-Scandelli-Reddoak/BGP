@@ -7,6 +7,9 @@ import { LinkButton } from "@/components/ui/button";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/form";
 import { PendingButton, useKeepValuesAction } from "./form-helpers";
 
+/** Marchio e categoria vengono allineati ai valori già in uso (maiuscole, spazi, accenti). */
+const LABEL_HINT = "Scegli dall'elenco o scrivi un valore nuovo: se esiste già scritto diversamente si usa quello.";
+
 export type ProductFormValues = {
   id: number | null;
   code: string;
@@ -124,7 +127,7 @@ function ProductFields({
         />
       </Field>
 
-      <Field label="Marchio" htmlFor={f("brand")} error={errors.brand}>
+      <Field label="Marchio" htmlFor={f("brand")} error={errors.brand} hint={LABEL_HINT}>
         <Input id={f("brand")} name="brand" list={f("brands")} maxLength={100} defaultValue={initial.brand} autoComplete="off" />
         <datalist id={f("brands")}>
           {brands.map((b) => (
@@ -133,7 +136,7 @@ function ProductFields({
         </datalist>
       </Field>
 
-      <Field label="Categoria" htmlFor={f("category")} error={errors.category}>
+      <Field label="Categoria" htmlFor={f("category")} error={errors.category} hint={LABEL_HINT}>
         <Input
           id={f("category")}
           name="category"

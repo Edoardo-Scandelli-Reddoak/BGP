@@ -1,11 +1,14 @@
 import type { Language } from "@/db/schema";
+import { normalizeCountry, recognizeCountry } from "@/lib/countries";
 import { formatEmailList, parseEmailList } from "@/lib/email/recipients";
 import { parseDecimal } from "@/lib/format";
+import { cleanLabel } from "@/lib/products/labels";
 
 /**
  * Lettura e normalizzazione dei file di BGP:
  *  - contatti: export Airtable "Lista_clienti_Airtable.xlsx"
  *    colonne Name | Email | Default address | Agent name | Agent email (cc) | Language
+ *    (+ facoltative Phone | Country: il paese è salvato col nome italiano se riconosciuto, vedi src/lib/countries.ts)
  *  - prodotti: "Product list.xlsx" — colonne Codice_articolo | Descrizione_articolo_estesa
  *    (+ facoltative Marchio | Categoria | Prezzo_m2)
  * Le intestazioni sono riconosciute anche con varianti (italiano/inglese, maiuscole, spazi).
@@ -28,6 +31,7 @@ export type ParsedCustomer = {
   name: string;
   email: string | null;
   defaultAddress: string | null;
+  /** Paese della colonna Paese (nome italiano se riconosciuto, altrimenti com'è scritto) o ricavato dall'indirizzo. */
   country: string | null;
   /** true se il paese è ricavato dall'indirizzo (non dalla colonna Paese): non sovrascrive quello salvato. */
   countryDerived: boolean;
@@ -47,6 +51,8 @@ export type ParsedProduct = {
   category: string | null;
   /** Prezzo al m² in euro: presente solo se la cella contiene un numero valido (altrimenti non si tocca). */
   pricePerM2?: number;
+  /** Colonna Attivo (Sì/No): assente o vuota = undefined (il prodotto del file viene attivato). */
+  active?: boolean;
 };
 
 export type ParseReport<T> = {
@@ -141,6 +147,22 @@ export function countryFromAddress(address: unknown, language: Language | null =
   return null;
 }
 
+const ACTIVE_VALUES: Record<string, boolean> = {
+  si: true, s: true, yes: true, y: true, true: true, vero: true, "1": true, x: true, attivo: true,
+  no: false, n: false, false: false, falso: false, "0": false, disattivo: false, disattivato: false,
+};
+
+/** Colonna Attivo: Sì/No (anche Yes/No, 1/0, Vero/Falso). null = cella vuota; NaN = valore non riconosciuto. */
+export function parseActive(value: unknown): boolean | null | number {
+  if (typeof value === "boolean") return value;
+  const s = str(value)
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase();
+  if (!s) return null;
+  return ACTIVE_VALUES[s] ?? NaN;
+}
+
 /** Prezzo massimo accettato (come gli importi in Impostazioni → Costi). */
 const MAX_PRICE = 100_000;
 
@@ -200,22 +222,25 @@ export const IMPORT_COLUMNS = {
   agentEmail: ["Agent email (cc)", "Agent email", "Email agente"],
   language: ["Language", "Lingua"],
   phone: ["Phone", "Telefono", "Tel"],
-  country: ["Country", "Paese", "Nazione"],
+  // «Country / Paese»: come la colonna è chiamata nella pagina di import e nel riepilogo
+  country: ["Country", "Paese", "Nazione", "Country / Paese"],
   code: ["Codice_articolo", "Codice articolo", "Codice", "SKU", "SKU code", "Code"],
   description: ["Descrizione_articolo_estesa", "Descrizione articolo estesa", "Descrizione", "Description", "Product name"],
   brand: ["Marchio", "Brand"],
   category: ["Categoria", "Category"],
   // le intestazioni si confrontano senza spazi né simboli: «Prezzo m²» diventa «prezzom»
+  active: ["Attivo", "Active"],
   pricePerM2: ["Prezzo_m2", "Prezzo al m2", "Prezzo m²", "Prezzo m2", "Prezzo al m²", "Prezzo/m2", "Prezzo al mq", "Prezzo mq", "Prezzo/mq", "Prezzo_mq", "Price per m2", "Price m2"],
 };
 
 export function parseContactRows(rows: RawRow[]): {
   agents: ParsedAgent[];
-  customers: ParseReport<ParsedCustomer>;
+  customers: ParseReport<ParsedCustomer> & { warnings: { row: number; reason: string }[] };
 } {
   const agents = new Map<string, ParsedAgent>();
   const customers: ParsedCustomer[] = [];
   const skipped: { row: number; reason: string }[] = [];
+  const warnings: { row: number; reason: string }[] = [];
   const seen = new Set<string>();
 
   rows.forEach((row, i) => {
@@ -241,16 +266,31 @@ export function parseContactRows(rows: RawRow[]): {
       return;
     }
     seen.add(key);
-    const explicitCountry = str(pick(row, IMPORT_COLUMNS.country));
+    // Colonna Paese: nome italiano se il paese è riconosciuto («FR», «France», «Hrvatska»…),
+    // altrimenti il valore com'è scritto, con un avviso nel riepilogo.
+    const countryCell = str(pick(row, IMPORT_COLUMNS.country)).replace(/\s+/g, " ");
+    const explicitCountry = normalizeCountry(countryCell);
+    if (explicitCountry && !recognizeCountry(countryCell)) {
+      warnings.push({ row: rowNum, reason: `${name}: paese «${countryCell}» non riconosciuto, salvato com'è — controlla` });
+    }
     const languageRaw = str(pick(row, IMPORT_COLUMNS.language));
     const language = normalizeLanguage(languageRaw);
+    const derivedCountry = countryFromAddress(pick(row, IMPORT_COLUMNS.address), language);
+    // Paese della colonna in contrasto con l'indirizzo (es. sigla di provincia «BG» letta come Bulgaria):
+    // vale la colonna, ma si segnala.
+    if (explicitCountry && derivedCountry && recognizeCountry(countryCell) && explicitCountry !== derivedCountry) {
+      warnings.push({
+        row: rowNum,
+        reason: `${name}: paese «${str(countryCell)}» (${explicitCountry}) diverso da quello dell'indirizzo (${derivedCountry}) — controlla`,
+      });
+    }
     customers.push({
       key,
       row: rowNum,
       name,
       email: normalizeEmails(pick(row, IMPORT_COLUMNS.email)),
       defaultAddress: address,
-      country: explicitCountry || countryFromAddress(pick(row, IMPORT_COLUMNS.address), language),
+      country: explicitCountry || derivedCountry,
       countryDerived: !explicitCountry,
       language,
       languageRaw,
@@ -259,7 +299,7 @@ export function parseContactRows(rows: RawRow[]): {
     });
   });
 
-  return { agents: [...agents.values()], customers: { rows: customers, skipped } };
+  return { agents: [...agents.values()], customers: { rows: customers, skipped, warnings } };
 }
 
 export function parseProductRows(rows: RawRow[]): ParseReport<ParsedProduct> {
@@ -278,8 +318,9 @@ export function parseProductRows(rows: RawRow[]): ParseReport<ParsedProduct> {
       skipped.push({ row: i + 2, reason: `Codice duplicato ${code}` });
       return;
     }
-    const brand = str(pick(row, IMPORT_COLUMNS.brand)).replace(/\s{2,}/g, " ") || null;
-    const category = str(pick(row, IMPORT_COLUMNS.category)).replace(/\s{2,}/g, " ") || null;
+    // Spazi normalizzati; l'allineamento ai valori già in anagrafica («gaia parquet» → «Gaia Parquet») è nell'import.
+    const brand = cleanLabel(str(pick(row, IMPORT_COLUMNS.brand)));
+    const category = cleanLabel(str(pick(row, IMPORT_COLUMNS.category)));
     const product: ParsedProduct = { code, description, brand, category };
     // Prezzo al m²: solo se la cella è un numero valido; un valore non valido viene ignorato e segnalato.
     const priceCell = pick(row, IMPORT_COLUMNS.pricePerM2);
@@ -287,6 +328,12 @@ export function parseProductRows(rows: RawRow[]): ParseReport<ParsedProduct> {
     if (price !== null && !Number.isNaN(price)) product.pricePerM2 = price;
     else if (Number.isNaN(price)) {
       warnings.push({ row: i + 2, reason: `${code}: prezzo al m² «${str(priceCell)}» non valido, non importato` });
+    }
+    const activeCell = pick(row, IMPORT_COLUMNS.active);
+    const active = parseActive(activeCell);
+    if (typeof active === "boolean") product.active = active;
+    else if (Number.isNaN(active)) {
+      warnings.push({ row: i + 2, reason: `${code}: Attivo «${str(activeCell)}» non riconosciuto (usa Sì o No), prodotto attivato` });
     }
     out.set(k, product);
   });

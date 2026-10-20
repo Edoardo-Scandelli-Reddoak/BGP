@@ -1,5 +1,12 @@
 import type { BollaRules } from "@/lib/config/bolla";
-import { CRM_COLUMNS, type CrmColumn, type CrmExportConfig, type CrmGroupBy, type CrmRow } from "@/lib/config/crm-export";
+import {
+  CRM_COLUMNS,
+  CRM_MISSING_LABEL,
+  type CrmColumn,
+  type CrmExportConfig,
+  type CrmGroupBy,
+  type CrmRow,
+} from "@/lib/config/crm-export";
 import { parseDecimal } from "@/lib/format";
 import { SAMPLE_FORMAT_LABELS } from "@/lib/sample-formats";
 
@@ -46,6 +53,8 @@ export const CRM_KEY_COLUMNS: Record<CrmGroupBy, CrmColumn[][]> = {
   PRODOTTO_CLIENTE: [["codice", "descrizione"], ["cliente"]],
   CLIENTE: [["cliente"]],
   AGENTE: [["agente"]],
+  MARCHIO: [["marchio"]],
+  CATEGORIA: [["categoria"]],
 };
 
 /** Colonne identificative mancanti: con "Per cliente" senza «Cliente» le righe non si distinguono. */
@@ -77,6 +86,14 @@ export const CRM_COLUMN_HINTS: Record<CrmColumn, string> = {
   pezzi: "Numero di pezzi spediti",
   m2: "Metri quadri spediti",
 };
+
+/** Spiegazione della colonna nel raggruppamento scelto: per marchio / categoria i prodotti senza valore sono raccolti. */
+export function crmColumnHint(column: CrmColumn, groupBy: CrmGroupBy): string {
+  if ((column === "marchio" && groupBy === "MARCHIO") || (column === "categoria" && groupBy === "CATEGORIA")) {
+    return `Dall'anagrafica prodotti; «${CRM_MISSING_LABEL}» per i prodotti senza ${column}`;
+  }
+  return CRM_COLUMN_HINTS[column];
+}
 
 export function crmColumnLabel(column: CrmColumn): string {
   return column === "m2" ? "m²" : CRM_COLUMNS[column];

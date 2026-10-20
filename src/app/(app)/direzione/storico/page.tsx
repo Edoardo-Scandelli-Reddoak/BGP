@@ -137,31 +137,26 @@ export default async function HistoryPage(props: PageProps<"/direzione/storico">
                   ) : null}
                 </Select>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="f-marchio">Marchio</Label>
-                <Select
-                  id="f-marchio"
-                  name="marchio"
-                  defaultValue={filters.marchio ?? ""}
-                  disabled={options.brands.length === 0 && !filters.marchio}
-                  aria-describedby={options.brands.length === 0 ? "f-marchio-hint" : undefined}
-                >
-                  <option value="">Tutti</option>
-                  {options.brands.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))}
-                  {filters.marchio && !options.brands.includes(filters.marchio) ? (
-                    <option value={filters.marchio}>{filters.marchio}</option>
-                  ) : null}
-                </Select>
-                {options.brands.length === 0 ? (
-                  <p id="f-marchio-hint" className="text-xs text-slate-500">
-                    Nessun marchio nell&apos;anagrafica prodotti.
-                  </p>
-                ) : null}
-              </div>
+              <ProductLabelSelect
+                id="f-marchio"
+                name="marchio"
+                label="Marchio"
+                values={options.brands}
+                hasMissing={options.hasMissingBrand}
+                selected={filters.marchio}
+                emptyHint="Nessun prodotto ha ancora un marchio in anagrafica."
+                noneHint="«Non indicato»: richieste con almeno un prodotto senza marchio."
+              />
+              <ProductLabelSelect
+                id="f-categoria"
+                name="categoria"
+                label="Categoria"
+                values={options.categories}
+                hasMissing={options.hasMissingCategory}
+                selected={filters.categoria}
+                emptyHint="Nessun prodotto ha ancora una categoria in anagrafica."
+                noneHint="«Non indicato»: richieste con almeno un prodotto senza categoria."
+              />
               <div className="space-y-1.5">
                 <Label htmlFor="f-origine">Origine</Label>
                 <Select id="f-origine" name="origine" defaultValue={filters.origine ?? ""}>
@@ -314,5 +309,55 @@ export default async function HistoryPage(props: PageProps<"/direzione/storico">
         </Card>
       </div>
     </>
+  );
+}
+
+/**
+ * Tendina di marchio o categoria: valori dell'anagrafica prodotti e «Non indicato» (richieste con almeno
+ * un prodotto senza valore). Resta utilizzabile anche quando nessun prodotto ha ancora un valore.
+ */
+function ProductLabelSelect({
+  id,
+  name,
+  label,
+  values,
+  hasMissing,
+  selected,
+  emptyHint,
+  noneHint,
+}: {
+  id: string;
+  name: "marchio" | "categoria";
+  label: string;
+  values: string[];
+  hasMissing: boolean;
+  selected: string | undefined;
+  /** Mostrato quando nessun prodotto ha un valore. */
+  emptyHint: string;
+  /** Significato di «Non indicato», mostrato quando è il filtro applicato. */
+  noneHint: string;
+}) {
+  const hintId = `${id}-hint`;
+  const hint = [values.length === 0 ? emptyHint : null, selected === NONE_VALUE ? noneHint : null].filter(Boolean).join(" ");
+  // un valore filtrato ma non più presente in anagrafica resta selezionabile
+  const options = selected && selected !== NONE_VALUE && !values.includes(selected) ? [...values, selected] : values;
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Select id={id} name={name} defaultValue={selected ?? ""} aria-describedby={hint ? hintId : undefined}>
+        <option value="">{name === "categoria" ? "Tutte" : "Tutti"}</option>
+        {options.map((v) => (
+          <option key={v} value={v}>
+            {v}
+          </option>
+        ))}
+        {hasMissing || selected === NONE_VALUE ? <option value={NONE_VALUE}>Non indicato</option> : null}
+      </Select>
+      {hint ? (
+        <p id={hintId} className="text-xs text-slate-500">
+          {hint}
+        </p>
+      ) : null}
+    </div>
   );
 }

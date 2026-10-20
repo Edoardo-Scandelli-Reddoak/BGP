@@ -16,6 +16,8 @@ import {
   CRM_COLUMNS,
   CRM_COLUMNS_BY_GROUP,
   CRM_GROUP_BY_LABELS,
+  CRM_GROUPS,
+  CRM_MISSING_LABEL,
   crmCsv,
   crmExportConfigSchema,
   crmFileName,
@@ -28,21 +30,21 @@ import { isValidEmail } from "@/lib/email/recipients";
 import { formatDateTime, formatMonth } from "@/lib/format";
 import { addMonths } from "@/lib/reports/period";
 import { FieldError, randomSecretHex, SaveBar, useUnsavedChangesWarning } from "./config-kit";
-import {
-  CRM_COLUMN_HINTS,
-  CRM_KEY_COLUMNS,
-  crmCellText,
-  crmColumnLabel,
-  missingCrmKeyColumns,
-} from "./config-utils";
-
-const GROUPS: CrmGroupBy[] = ["PRODOTTO", "PRODOTTO_CLIENTE", "CLIENTE", "AGENTE"];
+import { CRM_KEY_COLUMNS, crmCellText, crmColumnHint, crmColumnLabel, missingCrmKeyColumns } from "./config-utils";
 
 const GROUP_HINTS: Record<CrmGroupBy, string> = {
   PRODOTTO: "Una riga per ogni prodotto spedito nel mese (come il file di oggi).",
   PRODOTTO_CLIENTE: "Una riga per ogni prodotto e cliente: utile se il CRM registra i m² sul cliente.",
   CLIENTE: "Una riga per cliente, con i m² di tutti i prodotti.",
   AGENTE: "Una riga per agente; i clienti senza agente sono raccolti in «Direzionale».",
+  MARCHIO: `Una riga per marchio dell'anagrafica prodotti; i prodotti senza marchio sono raccolti in «${CRM_MISSING_LABEL}». Una richiesta con più marchi conta per ciascuno.`,
+  CATEGORIA: `Una riga per categoria dell'anagrafica prodotti; i prodotti senza categoria sono raccolti in «${CRM_MISSING_LABEL}». Una richiesta con più categorie conta per ciascuna.`,
+};
+
+/** Raggruppamenti che dipendono da un campo dell'anagrafica prodotti ancora da compilare. */
+const LABEL_GROUPS: Partial<Record<CrmGroupBy, { field: "brand" | "category"; text: string }>> = {
+  MARCHIO: { field: "brand", text: "Nessun prodotto ha ancora un marchio in anagrafica" },
+  CATEGORIA: { field: "category", text: "Nessun prodotto ha ancora una categoria in anagrafica" },
 };
 
 // valori delle opzioni come parole: un carattere di tabulazione in value="" non è affidabile
@@ -122,6 +124,7 @@ export function CrmExportSettingsForm({
   schedulerEnabled,
   nextRun,
   runs,
+  labeledProducts,
 }: {
   initial: CrmExportConfig;
   previewMonth: string;
@@ -134,6 +137,8 @@ export function CrmExportSettingsForm({
   schedulerEnabled: boolean;
   nextRun: string;
   runs: CrmRunRow[];
+  /** Prodotti in anagrafica con marchio / categoria (per avvisare se il raggruppamento darebbe solo «Non indicato»). */
+  labeledProducts: { brand: number; category: number };
 }) {
   const id = useId();
   const [saved, setSaved] = useState(() => fromConfig(initial));
@@ -224,6 +229,8 @@ export function CrmExportSettingsForm({
   const missingKeys = missingCrmKeyColumns(model.groupBy, model.columns);
   const isCsv = model.format === "CSV";
   const exampleName = crmFileName({ ...config, fileName: config.fileName || "m2-campioni-{mese}" }, previousMonth);
+  const labelGroup = LABEL_GROUPS[model.groupBy];
+  const unlabeledGroup = labelGroup && labeledProducts[labelGroup.field] === 0 ? labelGroup : null;
 
   // invio automatico che partirebbe subito dopo il salvataggio
   const channelsOn = (config.autoSend.enabled && config.autoSend.recipients.length > 0) || config.webhook.enabled;
@@ -252,7 +259,7 @@ export function CrmExportSettingsForm({
                 className="sm:max-w-sm"
                 aria-describedby={fieldDescriptionId(`${id}-group`)}
               >
-                {GROUPS.map((g) => (
+                {CRM_GROUPS.map((g) => (
                   <option key={g} value={g}>
                     {CRM_GROUP_BY_LABELS[g]}
                   </option>
@@ -261,6 +268,11 @@ export function CrmExportSettingsForm({
               <p id={fieldDescriptionId(`${id}-group`)} className="text-xs text-slate-500">
                 {GROUP_HINTS[model.groupBy]}
               </p>
+              {unlabeledGroup ? (
+                <p className="text-sm text-amber-800">
+                  {unlabeledGroup.text}: per ora il file avrebbe una sola riga «{CRM_MISSING_LABEL}» con tutti i m².
+                </p>
+              ) : null}
             </div>
 
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
@@ -284,7 +296,7 @@ export function CrmExportSettingsForm({
                           />
                           <span className="min-w-0">
                             <span className="font-medium text-slate-800">{crmColumnLabel(c)}</span>
-                            <span className="block text-xs text-slate-500">{CRM_COLUMN_HINTS[c]}</span>
+                            <span className="block text-xs text-slate-500">{crmColumnHint(c, model.groupBy)}</span>
                           </span>
                         </label>
                         <div className="flex shrink-0 gap-1">
@@ -336,7 +348,7 @@ export function CrmExportSettingsForm({
                           checked={false}
                           onChange={() => setColumn(c, true)}
                           label={crmColumnLabel(c)}
-                          hint={CRM_COLUMN_HINTS[c]}
+                          hint={crmColumnHint(c, model.groupBy)}
                         />
                       </li>
                     ))}

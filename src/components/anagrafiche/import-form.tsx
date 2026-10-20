@@ -122,12 +122,18 @@ function ImportSummaryView({ data }: { data: ImportResultData }) {
           </div>
         ))}
       </dl>
+      {/* Avvisi sull'intero file (es. clienti rimasti senza paese): uno solo, non una riga per contatto. */}
+      {data.notes?.map((note) => (
+        <Alert key={note} tone="warning">
+          {note}
+        </Alert>
+      ))}
       <RowNotes title="Righe scartate" rows={data.skipped} />
       <RowNotes
         title="Da verificare"
         hint={
           isContacts
-            ? "Righe importate con dati da controllare (es. lingua mancante): verifica e correggi i contatti indicati."
+            ? "Righe importate con dati da controllare (es. lingua mancante, paese non riconosciuto): verifica e correggi i contatti indicati."
             : "Righe importate con dati da controllare: verifica e correggi i prodotti indicati."
         }
         rows={warnings}

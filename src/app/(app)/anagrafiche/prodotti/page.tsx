@@ -1,12 +1,18 @@
 import type { Metadata } from "next";
 import Form from "next/form";
 import Link from "next/link";
-import { PAGE_SIZE } from "@/components/anagrafiche/constants";
+import {
+  BRAND_SUGGESTIONS,
+  CATEGORY_SUGGESTIONS,
+  mergeSuggestions,
+  PAGE_SIZE,
+} from "@/components/anagrafiche/constants";
 import { FilterSelect } from "@/components/anagrafiche/form-helpers";
 import { FilterField, listHref } from "@/components/anagrafiche/list-ui";
+import { ProductBulkLabels } from "@/components/anagrafiche/product-bulk-labels";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button, LinkButton } from "@/components/ui/button";
+import { Button, buttonClasses, LinkButton } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input, Label } from "@/components/ui/form";
@@ -15,9 +21,17 @@ import { Pagination, parsePage } from "@/components/ui/pagination";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { requireUser } from "@/lib/auth/session";
 import { formatEuro, formatM2, formatNumber } from "@/lib/format";
+import { MISSING_LABEL_FILTER, PRODUCT_LABEL_NAMES } from "@/lib/products/labels";
+import { productLabelCompletion } from "@/lib/products/labels-db";
 import { can } from "@/lib/roles";
 import { getSetting } from "@/lib/settings";
-import { listProductFacets, listProducts, param, parseProductFilters } from "../_lib/queries";
+import {
+  listProductFacets,
+  listProducts,
+  param,
+  parseProductFilters,
+  type ProductFilters,
+} from "../_lib/queries";
 
 export const metadata: Metadata = { title: "Prodotti" };
 
@@ -30,10 +44,11 @@ export default async function ProductsPage({ searchParams }: PageProps<"/anagraf
   const page = parsePage(sp.pagina);
   const canEdit = can(user.role, "registry.edit");
 
-  const [{ rows, total }, facets, costConfig] = await Promise.all([
+  const [{ rows, total }, facets, costConfig, completion] = await Promise.all([
     listProducts(filters, page),
     listProductFacets(),
     getSetting("costConfig"),
+    productLabelCompletion(),
   ]);
   // Colonna del prezzo al m² solo se serve: prezzi già indicati o valore dei campioni dai prezzi attivo nei costi.
   const showPrice =
@@ -46,34 +61,57 @@ export default async function ProductsPage({ searchParams }: PageProps<"/anagraf
     categoria: filters.category ?? undefined,
     ordina: filters.sort === "codice" ? undefined : filters.sort,
   };
-  const hasFilters = Boolean(params.q || params.attivi || params.marchio || params.categoria);
+  // filtri che restringono l'elenco (l'ordinamento no): li riusano l'export e l'assegnazione in blocco
+  const listFilters = { q: params.q, attivi: params.attivi, marchio: params.marchio, categoria: params.categoria };
+  const hasFilters = Object.values(listFilters).some(Boolean);
+  // l'export segue anche l'ordinamento dell'elenco
+  const exportHref = listHref("/api/export/prodotti", { ...listFilters, ordina: params.ordina });
   const brandOptions = withCurrent(facets.brands, filters.brand);
   const categoryOptions = withCurrent(facets.categories, filters.category);
 
   return (
     <>
       <PageHeader
-        eyebrow="Anagrafiche"
+        eyebrow={
+          <Link href="/anagrafiche" className="hover:underline">
+            Anagrafiche
+          </Link>
+        }
         title="Prodotti"
         description="Catalogo degli articoli campionabili, con l'utilizzo nelle richieste e i m² inviati."
         actions={
-          canEdit ? (
-            <>
-              <LinkButton href="/anagrafiche/import">Importa da file</LinkButton>
-              <LinkButton href={`${BASE}/nuovo`} variant="primary">
-                Nuovo prodotto
-              </LinkButton>
-            </>
-          ) : null
+          <>
+            <LinkButton href={`${BASE}/marchi-categorie`}>Marchi e categorie</LinkButton>
+            <a
+              href={exportHref}
+              download
+              className={buttonClasses("secondary", "md")}
+              title={hasFilters ? "Scarica i prodotti dell'elenco filtrato" : "Scarica tutti i prodotti"}
+            >
+              <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                <path d="M10 3v10m0 0l-4-4m4 4l4-4M4 16h12" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Esporta Excel
+            </a>
+            {canEdit ? (
+              <>
+                <LinkButton href="/anagrafiche/import">Importa da file</LinkButton>
+                <LinkButton href={`${BASE}/nuovo`} variant="primary">
+                  Nuovo prodotto
+                </LinkButton>
+              </>
+            ) : null}
+          </>
         }
       />
 
       <div className="space-y-4">
         {param(sp, "eliminato") === "1" ? <Alert tone="success">Prodotto eliminato.</Alert> : null}
+        <CompletionSummary completion={completion} canEdit={canEdit} />
 
         <Card>
           <Form
-            key={JSON.stringify(params)}
+            key={`filtri-${JSON.stringify(params)}`}
             action={BASE}
             className="space-y-3 border-b border-slate-100 px-4 py-4 sm:px-5"
             role="search"
@@ -104,14 +142,9 @@ export default async function ProductsPage({ searchParams }: PageProps<"/anagraf
                 </FilterSelect>
               </FilterField>
               <FilterField label="Marchio" id="f-marchio">
-                <FilterSelect
-                  id="f-marchio"
-                  name="marchio"
-                  defaultValue={filters.brand ?? ""}
-                  disabled={brandOptions.length === 0}
-                  title={brandOptions.length === 0 ? "Nessun prodotto ha ancora un marchio" : undefined}
-                >
+                <FilterSelect id="f-marchio" name="marchio" defaultValue={filters.brand ?? ""}>
                   <option value="">Tutti</option>
+                  <option value={MISSING_LABEL_FILTER}>{PRODUCT_LABEL_NAMES.brand.missing}</option>
                   {brandOptions.map((b) => (
                     <option key={b} value={b}>
                       {b}
@@ -120,14 +153,9 @@ export default async function ProductsPage({ searchParams }: PageProps<"/anagraf
                 </FilterSelect>
               </FilterField>
               <FilterField label="Categoria" id="f-categoria">
-                <FilterSelect
-                  id="f-categoria"
-                  name="categoria"
-                  defaultValue={filters.category ?? ""}
-                  disabled={categoryOptions.length === 0}
-                  title={categoryOptions.length === 0 ? "Nessun prodotto ha ancora una categoria" : undefined}
-                >
+                <FilterSelect id="f-categoria" name="categoria" defaultValue={filters.category ?? ""}>
                   <option value="">Tutte</option>
+                  <option value={MISSING_LABEL_FILTER}>{PRODUCT_LABEL_NAMES.category.missing}</option>
                   {categoryOptions.map((c) => (
                     <option key={c} value={c}>
                       {c}
@@ -154,6 +182,20 @@ export default async function ProductsPage({ searchParams }: PageProps<"/anagraf
               </div>
             ) : null}
           </Form>
+
+          {/* con filtri resta anche a elenco vuoto: dopo «Senza marchio» + assegnazione i prodotti escono
+              dall'elenco e l'esito deve restare visibile */}
+          {canEdit && (total > 0 || hasFilters) ? (
+            <ProductBulkLabels
+              key={`assegna-${JSON.stringify(listFilters)}`}
+              filters={listFilters}
+              total={total}
+              filtered={hasFilters}
+              filterText={describeFilters(filters)}
+              brands={mergeSuggestions(BRAND_SUGGESTIONS, facets.brands)}
+              categories={mergeSuggestions(CATEGORY_SUGGESTIONS, facets.categories)}
+            />
+          ) : null}
 
           {rows.length === 0 && total > 0 ? (
             <EmptyState
@@ -234,5 +276,59 @@ export default async function ProductsPage({ searchParams }: PageProps<"/anagraf
 
 /** Mantiene nel menu il valore filtrato anche se non è più presente in anagrafica. */
 function withCurrent(values: string[], current: string | null): string[] {
-  return current && !values.includes(current) ? [current, ...values] : values;
+  return current && current !== MISSING_LABEL_FILTER && !values.includes(current) ? [current, ...values] : values;
+}
+
+/** Filtri attivi in breve, per la conferma dell'assegnazione in blocco. */
+function describeFilters(f: ProductFilters): string {
+  const parts: string[] = [];
+  if (f.q) parts.push(`ricerca «${f.q}»`);
+  if (f.active === "1") parts.push("solo attivi");
+  else if (f.active === "0") parts.push("solo disattivati");
+  if (f.brand) parts.push(f.brand === MISSING_LABEL_FILTER ? "senza marchio" : `marchio «${f.brand}»`);
+  if (f.category) parts.push(f.category === MISSING_LABEL_FILTER ? "senza categoria" : `categoria «${f.category}»`);
+  return parts.join(" · ");
+}
+
+/** «Marchio mancante su 4.817 prodotti attivi · Categoria mancante su 4.817», con i link agli elenchi filtrati. */
+function CompletionSummary({
+  completion,
+  canEdit,
+}: {
+  completion: { missingBrand: number; missingCategory: number };
+  canEdit: boolean;
+}) {
+  const { missingBrand, missingCategory } = completion;
+  if (missingBrand === 0 && missingCategory === 0) return null;
+  const link = "font-semibold underline underline-offset-2";
+  const activeProducts = (n: number) => `${formatNumber(n, 0)} prodott${n === 1 ? "o attivo" : "i attivi"}`;
+  return (
+    <Alert tone="info">
+      <p>
+        {missingBrand > 0 ? (
+          <>
+            Marchio mancante su{" "}
+            <Link href={`${BASE}?attivi=1&marchio=${MISSING_LABEL_FILTER}`} className={link}>
+              {activeProducts(missingBrand)}
+            </Link>
+          </>
+        ) : null}
+        {missingBrand > 0 && missingCategory > 0 ? " · " : null}
+        {missingCategory > 0 ? (
+          <>
+            Categoria mancante su{" "}
+            <Link href={`${BASE}?attivi=1&categoria=${MISSING_LABEL_FILTER}`} className={link}>
+              {missingBrand > 0 ? formatNumber(missingCategory, 0) : activeProducts(missingCategory)}
+            </Link>
+          </>
+        ) : null}
+      </p>
+      {canEdit ? (
+        <p className="mt-1 text-brand-800">
+          Cerca per parole della descrizione (es. «battiscopa» o «collezione NAIF») e usa «Assegna marchio e categoria»
+          sotto i filtri per completarli in blocco.
+        </p>
+      ) : null}
+    </Alert>
+  );
 }

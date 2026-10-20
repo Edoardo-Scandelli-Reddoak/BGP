@@ -837,15 +837,15 @@ describe.skipIf(SKIP_REASON !== null)("configurazioni di BGP (integrazione con i
       ]);
     });
 
-    it("file CSV predefinito: stesso formato di oggi", async () => {
+    it("file CSV predefinito: una riga per prodotto con marchio e categoria", async () => {
       const { a } = fx.products;
       const file = await crm.buildCrmExportFile(CRM_MONTH, DEFAULT_CRM_EXPORT_CONFIG);
       expect(file.fileName).toBe(`m2-campioni-${CRM_MONTH}.csv`);
       expect(file.contentType).toBe("text/csv; charset=utf-8");
       const text = file.data.toString("utf8");
       const lines = text.replace(/^﻿/, "").split("\r\n");
-      expect(lines[0]).toBe("Codice;Descrizione;Marchio;Richieste;Pezzi;m2");
-      expect(lines).toContain(`${a.code};${a.description};BGP Test;2;3;1,25`);
+      expect(lines[0]).toBe("Codice;Descrizione;Marchio;Categoria;Richieste;Pezzi;m2");
+      expect(lines).toContain(`${a.code};${a.description};BGP Test;Parquet;2;3;1,25`);
       expect(file.rows).toBe(lines.length - 2);
       expect(file.rows).toBe((await rowsFor("PRODOTTO")).length);
     });
@@ -929,6 +929,7 @@ describe.skipIf(SKIP_REASON !== null)("configurazioni di BGP (integrazione con i
           codice: fx.products.a.code,
           descrizione: fx.products.a.description,
           marchio: "BGP Test",
+          categoria: "Parquet",
           richieste: 2,
           pezzi: 3,
           m2: 1.25,

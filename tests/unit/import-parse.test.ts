@@ -234,6 +234,64 @@ describe("parseContactRows — intestazioni alternative", () => {
     expect(agents).toEqual([{ key: "email:info@alpicem.example", name: "Alpicem Sagl", email: "info@alpicem.example", row: 2 }]);
   });
 
+  it("colonna Paese: nome italiano se riconosciuto (sigle ISO, inglese, lingua locale), senza avvisi", () => {
+    const { customers } = parseContactRows([
+      { Name: "Ditta FR", "Default address": "12 RUE DE LA PAIX, 75002 PARIS ()", Country: "FR" },
+      { Name: "Ditta HR", "Default address": "MORSKA 5, 21000 SPLIT (HR)", Country: " Hrvatska " },
+      { Name: "Ditta CH", Paese: "Schweiz" },
+      { Name: "Ditta UK", Nazione: "U.K." },
+      { Name: "Ditta IT", Country: "ITALY" },
+      // intestazione scritta come nella pagina di import
+      { Name: "Ditta AT", "Country / Paese": "AT" },
+    ]);
+    expect(customers.rows.map((c) => [c.name, c.country, c.countryDerived])).toEqual([
+      ["Ditta FR", "Francia", false],
+      ["Ditta HR", "Croazia", false],
+      ["Ditta CH", "Svizzera", false],
+      ["Ditta UK", "Regno Unito", false],
+      ["Ditta IT", "Italia", false],
+      ["Ditta AT", "Austria", false],
+    ]);
+    expect(customers.warnings).toEqual([]);
+  });
+
+  it("colonna Paese in contrasto con l'indirizzo (es. sigla di provincia): vale la colonna, con un avviso", () => {
+    const { customers } = parseContactRows([
+      { Name: "Ditta BG", "Default address": "VIA ROMA 1, 24023 CLUSONE (BG)", Country: "BG" },
+      { Name: "Ditta OK", "Default address": "VIA ROMA 2, 24023 CLUSONE (BG)", Country: "IT" },
+    ]);
+    expect(customers.rows.map((c) => c.country)).toEqual(["Bulgaria", "Italia"]);
+    expect(customers.warnings).toEqual([
+      { row: 2, reason: "Ditta BG: paese «BG» (Bulgaria) diverso da quello dell'indirizzo (Italia) — controlla" },
+    ]);
+  });
+
+  it("colonna Paese: valore non riconosciuto salvato com'è (spazi normalizzati) con un avviso sulla riga", () => {
+    const { customers } = parseContactRows([
+      { Name: "Ditta OK", Country: "Francia" },
+      { Name: "Ditta Refuso", Country: "  Frnce " },
+      { Name: "Ditta Isole", Country: "Isole  Fær Øer" },
+    ]);
+    expect(customers.rows.map((c) => c.country)).toEqual(["Francia", "Frnce", "Isole Fær Øer"]);
+    expect(customers.warnings).toEqual([
+      { row: 3, reason: "Ditta Refuso: paese «Frnce» non riconosciuto, salvato com'è — controlla" },
+      { row: 4, reason: "Ditta Isole: paese «Isole Fær Øer» non riconosciuto, salvato com'è — controlla" },
+    ]);
+  });
+
+  it("colonna Paese vuota: paese ricavato dall'indirizzo (che non sovrascrive quello salvato)", () => {
+    const { customers } = parseContactRows([
+      { Name: "Ditta BG", "Default address": "VIA ROMA 1, 24023 CLUSONE (BG)", Country: "  " },
+      { Name: "Ditta Estera", "Default address": "LINDENSTRASSE 22, 3014 BERN ()", Country: "" },
+      // «-» (o «?») nel file vale come cella vuota: non è un paese, nessun avviso
+      { Name: "Ditta Trattino", "Default address": "VIA ROMA 2, 24023 CLUSONE (BG)", Country: " - " },
+    ]);
+    expect(customers.rows[0]).toMatchObject({ country: "Italia", countryDerived: true });
+    expect(customers.rows[1]).toMatchObject({ country: null, countryDerived: true });
+    expect(customers.rows[2]).toMatchObject({ country: "Italia", countryDerived: true });
+    expect(customers.warnings).toEqual([]);
+  });
+
   it("lingua non riconosciuta → null con il valore originale", () => {
     const { customers } = parseContactRows([{ Name: "Ditta ES", Language: "Español" }]);
     expect(customers.rows[0]).toMatchObject({ language: null, languageRaw: "Español" });
@@ -316,6 +374,19 @@ describe("helper di normalizzazione", () => {
 });
 
 describe("parseProductRows", () => {
+  it("colonna Attivo: Sì/No (anche Yes/No, 1/0, x); vuota o assente → non indicata; altro → avviso", () => {
+    const { rows, warnings } = parseProductRows([
+      { Codice: "A1", Descrizione: "Rovere", Attivo: "Sì" },
+      { Codice: "A2", Descrizione: "Noce", Attivo: " NO " },
+      { Codice: "A3", Descrizione: "Olmo", Active: 0 },
+      { Codice: "A4", Descrizione: "Faggio", Attivo: "" },
+      { Codice: "A5", Descrizione: "Larice" },
+      { Codice: "A6", Descrizione: "Teak", Attivo: "forse" },
+    ]);
+    expect(rows.map((r) => r.active)).toEqual([true, false, false, undefined, undefined, undefined]);
+    expect(warnings).toEqual([{ row: 7, reason: "A6: Attivo «forse» non riconosciuto (usa Sì o No), prodotto attivato" }]);
+  });
+
   it("legge codice e descrizione estesa, comprimendo gli spazi", () => {
     const { rows, skipped } = parseProductRows([
       {
@@ -368,6 +439,13 @@ describe("parseProductRows", () => {
       { code: "10150E1", description: "Rovere Essence", brand: "Gaia Parquet", category: "Prefinito" },
       { code: "AB-1", description: "Noce", brand: null, category: null },
     ]);
+  });
+
+  it("Marchio e Categoria: spazi normalizzati e lunghezza massima 100 caratteri", () => {
+    const { rows } = parseProductRows([
+      { Codice_articolo: "X1", Descrizione_articolo_estesa: "Rovere", Marchio: "Gaia\n Parquet", Categoria: "A".repeat(150) },
+    ]);
+    expect(rows[0]).toMatchObject({ brand: "Gaia Parquet", category: "A".repeat(100) });
   });
 
   it("codice duplicato (senza distinzione maiuscole): la riga segnalata come scartata non viene importata", () => {

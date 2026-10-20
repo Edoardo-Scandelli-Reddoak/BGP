@@ -6,7 +6,7 @@ import { FilterField, listHref } from "@/components/anagrafiche/list-ui";
 import { CONTACT_TYPE_LABELS, PAGE_SIZE } from "@/components/anagrafiche/constants";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button, LinkButton } from "@/components/ui/button";
+import { Button, buttonClasses, LinkButton } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input, Label } from "@/components/ui/form";
@@ -16,9 +16,11 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import type { Language } from "@/db/schema";
 import { requireUser } from "@/lib/auth/session";
 import { parseEmailList } from "@/lib/email/recipients";
+import { countContacts } from "@/lib/exports/registry-data";
 import { formatNumber, LANGUAGE_LABELS } from "@/lib/format";
 import { can } from "@/lib/roles";
 import {
+  contactWhere,
   countContactsToReview,
   listAgents,
   listContacts,
@@ -30,6 +32,8 @@ import {
 export const metadata: Metadata = { title: "Contatti" };
 
 const BASE = "/anagrafiche/contatti";
+/** Elenco dei clienti (attivi) senza paese: da completare con export Excel → colonna Country → import. */
+const MISSING_COUNTRY = { tipo: "CLIENTE", paese: "-" };
 
 export default async function ContactsPage({ searchParams }: PageProps<"/anagrafiche/contatti">) {
   const user = await requireUser("registry.view");
@@ -38,11 +42,12 @@ export default async function ContactsPage({ searchParams }: PageProps<"/anagraf
   const page = parsePage(sp.pagina);
   const canEdit = can(user.role, "registry.edit");
 
-  const [{ rows, total }, agents, countries, toReview] = await Promise.all([
+  const [{ rows, total }, agents, countries, toReview, missingCountry] = await Promise.all([
     listContacts(filters, page),
     listAgents(),
     listCountries(),
     countContactsToReview(),
+    canEdit ? countContacts(contactWhere(parseContactFilters(MISSING_COUNTRY))) : 0,
   ]);
 
   // parametri da conservare nella paginazione (valori normalizzati)
@@ -56,6 +61,17 @@ export default async function ContactsPage({ searchParams }: PageProps<"/anagraf
     attivi: filters.active === "1" ? undefined : filters.active,
   };
   const hasFilters = Object.values(params).some(Boolean);
+  // export Excel dei clienti con i filtri correnti (il tipo non conta: il file contiene solo clienti)
+  const exportHref = listHref("/api/export/contatti", { ...params, tipo: undefined });
+  // l'elenco mostrato è proprio quello dei clienti senza paese (altri filtri restringerebbero l'export)
+  const onMissingCountryList =
+    filters.country === "-" &&
+    filters.type !== "AGENTE" &&
+    !filters.q &&
+    !filters.agent &&
+    !filters.language &&
+    !filters.review &&
+    filters.active === "1";
   const countryOptions =
     filters.country && filters.country !== "-" && !countries.includes(filters.country)
       ? [filters.country, ...countries]
@@ -68,14 +84,27 @@ export default async function ContactsPage({ searchParams }: PageProps<"/anagraf
         title="Contatti"
         description="Clienti e agenti: destinatari dei campioni e delle conferme di spedizione."
         actions={
-          canEdit ? (
-            <>
-              <LinkButton href="/anagrafiche/import">Importa da file</LinkButton>
-              <LinkButton href={`${BASE}/nuovo`} variant="primary">
-                Nuovo contatto
-              </LinkButton>
-            </>
-          ) : null
+          <>
+            <a
+              href={exportHref}
+              download
+              className={buttonClasses("secondary", "md")}
+              title="Clienti dell'elenco filtrato, nel formato dell'import (colonne del file Airtable)"
+            >
+              <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                <path d="M10 3v10m0 0l-4-4m4 4l4-4M4 16h12" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Esporta Excel
+            </a>
+            {canEdit ? (
+              <>
+                <LinkButton href="/anagrafiche/import">Importa da file</LinkButton>
+                <LinkButton href={`${BASE}/nuovo`} variant="primary">
+                  Nuovo contatto
+                </LinkButton>
+              </>
+            ) : null}
+          </>
         }
       />
 
@@ -89,6 +118,26 @@ export default async function ContactsPage({ searchParams }: PageProps<"/anagraf
             <Link href={`${BASE}?verifica=1`} className="font-semibold underline underline-offset-2">
               Mostra
             </Link>
+          </Alert>
+        ) : null}
+        {missingCountry > 0 ? (
+          <Alert tone="info">
+            {missingCountry === 1 ? "1 cliente non ha il paese." : `${formatNumber(missingCountry, 0)} clienti non hanno il paese.`}{" "}
+            {missingCountry === 1 ? "Per completarlo" : "Per completarli"}{" "}
+            {onMissingCountryList ? null : (
+              <>
+                apri l&apos;elenco{" "}
+                <Link href={listHref(BASE, MISSING_COUNTRY)} className="font-semibold underline underline-offset-2">
+                  Paese non indicato
+                </Link>
+                ,{" "}
+              </>
+            )}
+            scarica il file con «Esporta Excel», compila la colonna Country e reimportalo da{" "}
+            <Link href="/anagrafiche/import" className="font-semibold underline underline-offset-2">
+              Importa da file
+            </Link>{" "}
+            (riquadro Contatti).
           </Alert>
         ) : null}
 

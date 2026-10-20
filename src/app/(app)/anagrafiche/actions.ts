@@ -10,6 +10,7 @@ import { fail, NOT_AUTHORIZED, zodFieldErrors, type ActionResult } from "@/lib/a
 import { getAuthorizedUser } from "@/lib/auth/session";
 import { importContacts, importProducts, type ImportSummary } from "@/lib/import/import-db";
 import { readTabularFile } from "@/lib/import/read-file";
+import { canonicalProductLabel } from "@/lib/products/labels-db";
 import { safeReturnPath } from "@/lib/safe-path";
 import { parseDbId } from "@/lib/validation";
 import { IMPORT_EXTENSIONS, IMPORT_MAX_BYTES } from "@/components/anagrafiche/constants";
@@ -153,6 +154,12 @@ export async function saveProduct(_prev: State, fd: FormData): Promise<ActionRes
   const parsed = productInput.safeParse(productFromForm(fd));
   if (!parsed.success) return fail(INVALID_FORM, zodFieldErrors(parsed.error.issues));
   const { id, ...values } = parsed.data;
+  // marchio e categoria con la grafia già usata dagli altri prodotti («gaia parquet» → «Gaia Parquet»)
+  const others = { excludeProductId: id ?? undefined };
+  [values.brand, values.category] = await Promise.all([
+    canonicalProductLabel("brand", values.brand, others),
+    canonicalProductLabel("category", values.category, others),
+  ]);
 
   // il codice è unico senza distinzione tra maiuscole e minuscole (indice su upper(code))
   const dup = await db

@@ -20,6 +20,7 @@ import { sendRequestNotification, type NotificationResult } from "@/lib/email/no
 import { parseEmailList } from "@/lib/email/recipients";
 import { TIME_ZONE, todayIso } from "@/lib/format";
 import { bollaRuleReasons, formatBollaNumber, type BollaConfig } from "@/lib/config/bolla";
+import { normalizeCountry } from "@/lib/countries";
 import { can } from "@/lib/roles";
 import { getSetting } from "@/lib/settings";
 import { SAMPLE_FORMATS, sampleFormatMissing } from "@/lib/sample-formats";
@@ -104,8 +105,8 @@ export const requestInfoInput = z.object({
     .min(1, "Indica l'indirizzo di consegna")
     .max(2000)
     .transform(normalizeMultiline),
-  /** Paese di consegna (se assente si usa quello del contatto). */
-  destinationCountry: optionalText(80),
+  /** Paese di consegna (se assente si usa quello del contatto); se riconosciuto, salvato col nome italiano. */
+  destinationCountry: optionalText(80).transform(normalizeCountry),
   /** Preavviso telefonico prima della consegna: null = non ancora indicato. */
   phoneNotice: z.boolean().nullish().transform((v) => v ?? null),
   phoneNoticeNumber: optionalText(50),
@@ -228,10 +229,10 @@ export function applyBollaRules(
     : { deliveryFormRequired: manual, deliveryFormAutoReason: null };
 }
 
-/** Paese del contatto (predefinito per il paese di consegna). */
+/** Paese del contatto (predefinito per il paese di consegna), col nome italiano se riconosciuto. */
 async function contactCountry(contactId: number): Promise<string | null> {
   const [c] = await db.select({ country: contacts.country }).from(contacts).where(eq(contacts.id, contactId)).limit(1);
-  return c?.country ?? null;
+  return normalizeCountry(c?.country);
 }
 
 function statusError(status: RequestStatus, action: string): Result<never> {

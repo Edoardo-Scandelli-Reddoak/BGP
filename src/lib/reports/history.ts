@@ -3,6 +3,7 @@ import { and, asc, count, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQ
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import { carriers, contacts, sampleRequests } from "@/db/schema";
+import type { ProductLabelField } from "@/lib/products/labels";
 import { likePattern } from "@/lib/search";
 import { SHIPPED_STATUSES } from "@/lib/status";
 import { effectiveShipmentDate, receivedBetween, romeDayStart } from "./conditions";
@@ -19,6 +20,18 @@ const agentOf = sql<number | null>`(case when ${contacts.type} = 'AGENTE' then $
 
 function words(q: string): string[] {
   return q.trim().split(/\s+/).filter(Boolean).slice(0, 6);
+}
+
+/**
+ * La richiesta contiene almeno un prodotto con quel marchio / quella categoria (stessi valori del
+ * cruscotto: spazi esterni tolti); NONE_VALUE = almeno un prodotto senza valore in anagrafica.
+ */
+function hasProductLabel(field: ProductLabelField, value: string): SQL {
+  const column = sql.raw(field === "brand" ? "pr.brand" : "pr.category");
+  const match = value === NONE_VALUE ? sql`nullif(trim(${column}), '') is null` : sql`trim(${column}) = ${value}`;
+  return sql`exists (
+    select 1 from request_items ri join products pr on pr.id = ri.product_id
+    where ri.request_id = ${sampleRequests.id} and ${match})`;
 }
 
 function buildConditions(f: HistoryFilters): SQL | undefined {
@@ -51,11 +64,8 @@ function buildConditions(f: HistoryFilters): SQL | undefined {
       where ri.request_id = ${sampleRequests.id} and ${match})`);
   }
 
-  if (f.marchio) {
-    conds.push(sql`exists (
-      select 1 from request_items ri join products pr on pr.id = ri.product_id
-      where ri.request_id = ${sampleRequests.id} and trim(pr.brand) = ${f.marchio})`);
-  }
+  if (f.marchio) conds.push(hasProductLabel("brand", f.marchio));
+  if (f.categoria) conds.push(hasProductLabel("category", f.categoria));
 
   // le richieste intestate a un agente contano per l'agente stesso (come nel cruscotto)
   if (f.agente === NONE_VALUE) conds.push(and(isNull(contacts.agentId), ne(contacts.type, "AGENTE"))!);
@@ -150,11 +160,15 @@ export type HistoryFilterOptions = {
   countries: string[];
   hasMissingCountry: boolean;
   brands: string[];
+  /** Almeno una richiesta contiene un prodotto senza marchio (opzione «Non indicato»). */
+  hasMissingBrand: boolean;
+  categories: string[];
+  hasMissingCategory: boolean;
 };
 
-/** Valori per le tendine dei filtri (agenti, paesi dei contatti con richieste, marchi). */
+/** Valori per le tendine dei filtri (agenti, paesi dei contatti con richieste, marchi e categorie). */
 export async function getHistoryFilterOptions(): Promise<HistoryFilterOptions> {
-  const [agents, countries, brands] = await Promise.all([
+  const [agents, countries, labels, missing] = await Promise.all([
     db
       .select({ id: contacts.id, name: contacts.name })
       .from(contacts)
@@ -165,15 +179,26 @@ export async function getHistoryFilterOptions(): Promise<HistoryFilterOptions> {
       from contacts
       where exists (select 1 from sample_requests sr where sr.contact_id = contacts.id)
       order by 1 nulls last`),
-    db.execute<{ brand: string }>(sql`
-      select distinct trim(brand) as brand from products
-      where brand is not null and trim(brand) <> ''
-      order by 1`),
+    db.execute<{ field: ProductLabelField; value: string }>(sql`
+      select 'brand' as field, trim(brand) as value from products where nullif(trim(brand), '') is not null
+      union
+      select 'category', trim(category) from products where nullif(trim(category), '') is not null
+      order by 1, 2`),
+    db.execute<{ brand: boolean; category: boolean }>(sql`
+      select
+        exists (select 1 from request_items ri join products pr on pr.id = ri.product_id
+                where nullif(trim(pr.brand), '') is null) as brand,
+        exists (select 1 from request_items ri join products pr on pr.id = ri.product_id
+                where nullif(trim(pr.category), '') is null) as category`),
   ]);
+  const valuesOf = (field: ProductLabelField) => labels.filter((l) => l.field === field).map((l) => l.value);
   return {
     agents,
     countries: countries.map((c) => c.country).filter((c): c is string => !!c),
     hasMissingCountry: countries.some((c) => !c.country),
-    brands: brands.map((b) => b.brand),
+    brands: valuesOf("brand"),
+    hasMissingBrand: !!missing[0]?.brand,
+    categories: valuesOf("category"),
+    hasMissingCategory: !!missing[0]?.category,
   };
 }

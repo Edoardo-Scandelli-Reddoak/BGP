@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeCountry } from "@/lib/countries";
 import { formatEmailList, invalidEmails, parseEmailList } from "@/lib/email/recipients";
 import { parseDecimal } from "@/lib/format";
 import { parseDbId } from "@/lib/validation";
@@ -45,7 +46,8 @@ export const contactInput = z.object({
       return list.length ? formatEmailList(list) : null;
     }),
   phone: optionalText(60),
-  country: optionalText(80),
+  /** Paese riconosciuto («FR», «France», «Hrvatska»…) salvato col nome italiano, altrimenti com'è scritto. */
+  country: optionalText(80).transform(normalizeCountry),
   defaultAddress: optionalText(1000),
   language: z.enum(["it", "en", "fr", "de"], { error: "Seleziona la lingua delle email" }),
   agentId: idOrNull,

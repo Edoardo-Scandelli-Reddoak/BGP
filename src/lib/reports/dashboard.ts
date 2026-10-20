@@ -4,11 +4,13 @@ import { db } from "@/db";
 import type { RequestStatus } from "@/db/schema";
 import type { CostConfig } from "@/lib/config/costs";
 import { TIME_ZONE } from "@/lib/format";
+import type { ProductLabelField } from "@/lib/products/labels";
 import { costSqlComponents } from "@/lib/requests/costs";
 import { getSetting } from "@/lib/settings";
 import { STATUS_ORDER } from "@/lib/status";
 import { effectiveShipmentDate, receivedBetween, shippedBetween } from "./conditions";
 import { addMonths, monthsBetween, monthStart } from "./period";
+import { productLabelSql } from "./product-labels";
 
 /**
  * Dati del cruscotto direzione. Tutte le aggregazioni sono in SQL (GROUP BY).
@@ -57,6 +59,17 @@ export type ProductRow = {
   code: string;
   description: string;
   requests: number;
+  pieces: number;
+  m2: number;
+};
+
+/** Marchio o categoria del prodotto (null = non indicato in anagrafica). */
+export type LabelRow = {
+  label: string | null;
+  /** Richieste ricevute nel periodo con almeno un prodotto del gruppo (una sola volta per richiesta). */
+  requests: number;
+  /** Prodotti diversi del gruppo richiesti o spediti nel periodo. */
+  products: number;
   pieces: number;
   m2: number;
 };
@@ -289,6 +302,83 @@ export async function getByProduct(range: Range, limit: number | null): Promise<
       m2: num(r.m2),
     })),
   };
+}
+
+/**
+ * Per marchio o categoria del prodotto, con le regole di getByProduct: richieste = ricevute nel periodo
+ * (distinte: una richiesta con due prodotti dello stesso marchio conta una volta, con due marchi conta
+ * per entrambi); pezzi e m² = richieste spedite nel periodo. Senza valore in anagrafica → riga con label null.
+ */
+async function getByProductLabel(field: ProductLabelField, range: Range, limit: number | null): Promise<Ranked<LabelRow>> {
+  const label = productLabelSql(field);
+  const received = receivedBetween(range.da, range.a);
+  const shipped = shippedBetween(range.da, range.a);
+  const rows = await db.execute<{
+    label: string | null;
+    requests: number;
+    products: number;
+    pieces: number;
+    m2: number;
+    total: number;
+  }>(sql`
+    with req as (
+      select ${label} as label, count(distinct request_items.request_id) as n
+      from request_items
+      join sample_requests on sample_requests.id = request_items.request_id
+      join products on products.id = request_items.product_id
+      where ${received}
+      group by 1
+    ),
+    shp as (
+      select ${label} as label, sum(pieces.quantity) as qty, sum(pieces.area_m2) as m2
+      from pieces
+      join sample_requests on sample_requests.id = pieces.request_id
+      join products on products.id = pieces.product_id
+      where ${shipped}
+      group by 1
+    ),
+    prod as (
+      select ${label} as label, count(*) as n
+      from products
+      where products.id in (
+              select request_items.product_id from request_items
+              join sample_requests on sample_requests.id = request_items.request_id
+              where ${received})
+         or products.id in (
+              select pieces.product_id from pieces
+              join sample_requests on sample_requests.id = pieces.request_id
+              where ${shipped})
+      group by 1
+    )
+    select prod.label,
+           coalesce(req.n, 0)::int as requests,
+           prod.n::int as products,
+           coalesce(shp.qty, 0)::int as pieces,
+           coalesce(shp.m2, 0)::float8 as m2,
+           (count(*) over ())::int as total
+    from prod
+    left join req on req.label is not distinct from prod.label
+    left join shp on shp.label is not distinct from prod.label
+    order by m2 desc, requests desc, label nulls last
+    ${limitClause(limit)}`);
+  return {
+    total: num(rows[0]?.total),
+    rows: rows.map((r) => ({
+      label: r.label,
+      requests: num(r.requests),
+      products: num(r.products),
+      pieces: num(r.pieces),
+      m2: num(r.m2),
+    })),
+  };
+}
+
+export function getByBrand(range: Range, limit: number | null): Promise<Ranked<LabelRow>> {
+  return getByProductLabel("brand", range, limit);
+}
+
+export function getByCategory(range: Range, limit: number | null): Promise<Ranked<LabelRow>> {
+  return getByProductLabel("category", range, limit);
 }
 
 export async function getByCountry(range: Range, limit: number | null, costConfig?: CostConfig): Promise<Ranked<CountryRow>> {

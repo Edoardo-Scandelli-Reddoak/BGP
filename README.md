@@ -56,7 +56,7 @@ cruscotto usano tutti la stessa regola.
 | Back office | Richieste aperte | Creare e modificare richieste, anagrafiche, import |
 | Magazzino (×2, da telefono) | Coda magazzino | Colli, peso, pezzi, «pronta per il ritiro» |
 | Logistica | Pronte per il ritiro · Bolle da preparare · Spedite senza tracking | Spedizione, bolla, DDT, tracking, costi |
-| Direzione | Cruscotto · Storico completo | Sola lettura: stato, volumi, costi per cliente, conteggi per contatto/prodotto/paese; storico ed export CSV con destinatario e formato dei campioni |
+| Direzione | Cruscotto · Storico completo | Sola lettura: stato, volumi, costi per cliente, conteggi per contatto/prodotto/paese/marchio/categoria; storico ed export CSV con destinatario e formato dei campioni |
 | Ufficio CRM | Report m² mensile | m² del mese ed export per il CRM (formato, colonne e invio automatico configurabili in Impostazioni → Export CRM) |
 | Amministratore | tutto | Utenti, destinatari email, template, corrieri, dati della bolla, registro email e le [impostazioni di BGP](#impostazioni-di-bgp): costi per cliente, bolla di consegna, export m² per il CRM |
 
@@ -102,8 +102,9 @@ i valori medi delle ultime spedizioni.
 Intestazione, causale, porto e aspetto della bolla restano in *Bolla e azienda* (`/impostazioni/azienda`).
 
 **Export CRM** (`/impostazioni/export-crm`) — il file mensile dei m² per il CRM:
-- *Contenuto*: una riga per prodotto, per prodotto e cliente, per cliente o per agente; colonne scelte e ordinate
-  (mese, codice, descrizione, marchio, categoria, cliente, paese, agente, richieste, pezzi, m²).
+- *Contenuto*: una riga per prodotto, per prodotto e cliente, per cliente, per agente, per marchio o per categoria;
+  colonne scelte e ordinate (mese, codice, descrizione, marchio, categoria, cliente, paese, agente, richieste, pezzi, m²).
+  Marchio e categoria mancanti compaiono come «Non indicato».
 - *Formato*: CSV (separatore `;` `,` o tabulazione, decimali con virgola o punto, riga di intestazione) o Excel,
   nome del file con `{mese}`. Anteprima con i dati veri di un mese e «Scarica il file di esempio».
 - *Invio automatico*: il giorno scelto (1-28) il sistema manda per email ai destinatari il file del mese
@@ -143,8 +144,14 @@ Altri comandi: `npm run typecheck`, `npm run lint`, `npm test`, `npm run db:stud
 `npm run import` (o la pagina *Anagrafiche → Importa da file*) accetta `.xlsx` o `.csv`:
 
 - **Contatti** — formato dell'export Airtable: `Name`, `Email`, `Default address`, `Agent name`,
-  `Agent email (cc)`, `Language` (facoltativi `Country`/`Paese`, `Phone`). Gli agenti diventano contatti
-  di tipo «Agente» collegati ai clienti; i clienti senza agente sono i «direzionali». Più email separate da `;`.
+  `Agent email (cc)`, `Language`, consigliata `Country` (o `Paese`/`Nazione`), facoltativa `Phone`. Gli agenti
+  diventano contatti di tipo «Agente» collegati ai clienti; i clienti senza agente sono i «direzionali». Più email
+  separate da `;`.
+  - **Colonna Country**: nome del paese in italiano, inglese o nella lingua locale, oppure sigla ISO (`IT`, `FR`,
+    `CH`…); viene salvato sempre col nome italiano (`src/lib/countries.ts`, lo stesso vale per i form). Un valore
+    non riconosciuto resta com'è con un avviso; un paese diverso da quello che risulta dall'indirizzo (es. `BG`,
+    sigla di provincia letta come Bulgaria) viene salvato ma segnalato. Le celle vuote non cancellano il paese
+    salvato; il riepilogo dice quanti clienti restano senza paese.
   - **Paese** (se manca la colonna): Italia quando l'indirizzo ha CAP a 5 cifre e sigla di una provincia
     italiana, es. `24023 CLUSONE (BG)`; `(HR)` → Croazia, `(SM)` → San Marino, `(CH)`/`(TI)`/`(ZH)` con
     CAP a 4 cifre → Svizzera; `(EE)` e gli altri casi restano da completare («Paese non indicato»).
@@ -152,11 +159,36 @@ Altri comandi: `npm run typecheck`, `npm run lint`, `npm test`, `npm run db:stud
   - **Lingua** (obbligatoria per BGP, decide la lingua della conferma): se manca, un contatto nuovo viene
     creato in italiano e segnato «da verificare»; uno esistente mantiene la sua. Il riepilogo dell'import
     elenca queste righe.
-- **Prodotti** — `Codice_articolo`, `Descrizione_articolo_estesa`; facoltative `Marchio` e `Categoria`
-  (impostate solo se la cella non è vuota).
+- **Prodotti** — `Codice_articolo`, `Descrizione_articolo_estesa`; consigliate `Marchio` e `Categoria`
+  (allineate ai valori già presenti senza distinguere maiuscole, spazi e accenti: «gaia parquet» diventa
+  «Gaia Parquet»), facoltative `Prezzo_m2` e `Attivo` (Sì/No). Le celle vuote non cancellano i valori salvati; i
+  prodotti del file vengono attivati salvo «No» nella colonna Attivo.
 
 L'import è ripetibile: aggiorna i record esistenti (clienti riconosciuti per nome + indirizzo,
 prodotti per codice) e non cancella nulla.
+
+**Esporta Excel** (*Anagrafiche → Contatti / Prodotti*, `/api/export/contatti` e `/api/export/prodotti` con gli
+stessi filtri dell'elenco) scarica i dati esattamente nel formato dell'import: si completano in Excel (es. la
+colonna Country dei clienti con «Paese non indicato», o Marchio e Categoria) e si reimportano. Il file contatti
+contiene solo i clienti; gli agenti sono nelle colonne Agent.
+
+### Marchio e categoria dei prodotti
+
+BGP li vuole (risposta del 20/10/2026), ma la lista prodotti ha solo codice e descrizione. Per compilarli:
+- *Anagrafiche → Prodotti*: riepilogo dei prodotti attivi senza marchio o categoria, filtri «Senza marchio» /
+  «Senza categoria» e **assegnazione in blocco** ai prodotti filtrati (es. cerca «battiscopa» → categoria;
+  cerca «collezione NAIF» → marchio), solo dove manca o sostituendo i valori presenti.
+- *Anagrafiche → Prodotti → Marchi e categorie*: valori in uso con il numero di prodotti, rinomina (che unisce
+  due grafie dello stesso valore) e rimozione.
+- Oppure in Excel con «Esporta Excel» e import.
+
+Marchio e categoria compaiono nella ricerca prodotti dei moduli, nel cruscotto (*Per marchio*, *Per categoria*),
+nei filtri dello storico, nel report m² (con riepilogo per marchio e categoria) e nell'export CRM.
+
+`npm run bgp:files` prepara in `../per-BGP/` i file originali di BGP con le colonne da completare: la lista
+clienti con la colonna `Country` già compilata dove il paese è noto (celle vuote evidenziate in giallo, contatti
+da verificare in arancione) e la lista prodotti con `Marchio` e `Categoria` (menu dei valori proposti) più due
+colonne di aiuto ignorate dall'import, «Tipo (dalla descrizione)» e «Collezione», per filtrare in Excel.
 
 ## Produzione
 
@@ -209,18 +241,15 @@ Finché nessuno le modifica vale il comportamento predefinito:
    della logistica, numero `C0001/2026`, nessuna regola (la bolla la richiede il back office). Se BGP sceglie la
    bolla generata, la serie di numerazione va concordata con il commercialista.
 3. **m² nel CRM** (*Impostazioni → Export CRM*): raggruppamento, colonne e formato del file, invio automatico
-   mensile per email e/o webhook verso il CRM. Predefinito: CSV per prodotto (`Codice;Descrizione;Marchio;Richieste;Pezzi;m2`,
+   mensile per email e/o webhook verso il CRM. Predefinito: CSV per prodotto (`Codice;Descrizione;Marchio;Categoria;Richieste;Pezzi;m2`,
    virgola decimale), scaricato a mano, nessun invio automatico. Il mese è quello della data di spedizione, o
    della data di ritiro se la spedizione non ha data.
 
-### Punti ancora da confermare con BGP
+### Dati da completare con BGP
 
-1. **Marchio e categoria dei prodotti** (filtro «Marchio» dello storico e colonna Marchio del CSV m²):
-   la lista prodotti di BGP ha solo codice e descrizione, quindi oggi sono vuoti. Servono? Se sì, basta
-   un file con `Codice_articolo` e `Marchio` (es. SmartFloors, Gaia Parquet, AFAP, Aquawood) ed
-   eventualmente `Categoria`, da caricare con l'import prodotti.
-2. **Paese dei contatti esteri**: nel file Airtable la sigla tra parentesi non distingue sempre l'estero.
-   `(EE)` e i CAP non italiani restano senza paese («Paese non indicato», da completare in anagrafica);
-   due indirizzi esteri con CAP a 5 cifre e sigla uguale a una provincia (`71000 SARAJEVO (BA)`,
-   `21233 CENEJ (SR)`) risultano Italia e vanno corretti a mano. Meglio aggiungere una colonna `Country`:
-   il paese serve anche alla regola «spedizioni all'estero» della bolla.
+1. **Marchio e categoria dei prodotti**: confermati necessari; vanno compilati con gli strumenti descritti in
+   [Marchio e categoria dei prodotti](#marchio-e-categoria-dei-prodotti) o con il file preparato da `npm run bgp:files`.
+2. **Paese dei contatti esteri**: BGP aggiunge la colonna `Country` al file contatti. Nel file Airtable la sigla
+   tra parentesi non distingue sempre l'estero: `(EE)` e i CAP non italiani restano senza paese; due indirizzi
+   esteri con CAP a 5 cifre e sigla uguale a una provincia (`71000 SARAJEVO (BA)`, `21233 CENEJ (SR)`) risultano
+   Italia e vanno corretti. Il paese serve anche alla regola «spedizioni all'estero» della bolla.

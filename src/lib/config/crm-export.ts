@@ -6,14 +6,22 @@ import { z } from "zod";
  * Modulo puro: tipi, valori predefiniti, validazione e scrittura del CSV.
  */
 
-export type CrmGroupBy = "PRODOTTO" | "PRODOTTO_CLIENTE" | "CLIENTE" | "AGENTE";
+/** Raggruppamenti, nell'ordine della tendina. */
+export const CRM_GROUPS = ["PRODOTTO", "PRODOTTO_CLIENTE", "CLIENTE", "AGENTE", "MARCHIO", "CATEGORIA"] as const;
+
+export type CrmGroupBy = (typeof CRM_GROUPS)[number];
 
 export const CRM_GROUP_BY_LABELS: Record<CrmGroupBy, string> = {
   PRODOTTO: "Per prodotto",
   PRODOTTO_CLIENTE: "Per prodotto e cliente",
   CLIENTE: "Per cliente",
   AGENTE: "Per agente",
+  MARCHIO: "Per marchio",
+  CATEGORIA: "Per categoria",
 };
+
+/** Nei raggruppamenti per marchio e per categoria, i prodotti senza valore in anagrafica (come «Direzionale» per gli agenti). */
+export const CRM_MISSING_LABEL = "Non indicato";
 
 export const CRM_COLUMNS = {
   mese: "Mese",
@@ -39,6 +47,8 @@ export const CRM_COLUMNS_BY_GROUP: Record<CrmGroupBy, CrmColumn[]> = {
   ],
   CLIENTE: ["mese", "cliente", "paese", "agente", "richieste", "pezzi", "m2"],
   AGENTE: ["mese", "agente", "richieste", "pezzi", "m2"],
+  MARCHIO: ["mese", "marchio", "richieste", "pezzi", "m2"],
+  CATEGORIA: ["mese", "categoria", "richieste", "pezzi", "m2"],
 };
 
 export type CrmExportConfig = {
@@ -58,9 +68,9 @@ export type CrmExportConfig = {
 };
 
 export const DEFAULT_CRM_EXPORT_CONFIG: CrmExportConfig = {
-  // Stesso file di oggi: Codice;Descrizione;Marchio;Richieste;Pezzi;m2 per prodotto.
+  // Una riga per prodotto: Codice;Descrizione;Marchio;Categoria;Richieste;Pezzi;m2.
   groupBy: "PRODOTTO",
-  columns: ["codice", "descrizione", "marchio", "richieste", "pezzi", "m2"],
+  columns: ["codice", "descrizione", "marchio", "categoria", "richieste", "pezzi", "m2"],
   separator: ";",
   decimal: ",",
   header: true,
@@ -72,7 +82,7 @@ export const DEFAULT_CRM_EXPORT_CONFIG: CrmExportConfig = {
 
 export const crmExportConfigSchema = z
   .object({
-    groupBy: z.enum(["PRODOTTO", "PRODOTTO_CLIENTE", "CLIENTE", "AGENTE"]),
+    groupBy: z.enum(CRM_GROUPS),
     columns: z
       .array(z.enum(Object.keys(CRM_COLUMNS) as [CrmColumn, ...CrmColumn[]]))
       .min(1, "Scegli almeno una colonna"),

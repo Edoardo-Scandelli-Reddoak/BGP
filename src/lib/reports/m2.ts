@@ -2,14 +2,17 @@ import "server-only";
 import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { contacts, pieces, products, sampleRequests, type RequestStatus } from "@/db/schema";
+import type { ProductLabelField } from "@/lib/products/labels";
 import { effectiveShipmentDate, shippedBetween } from "./conditions";
 import { monthEnd, monthStart } from "./period";
+import { productLabelSql } from "./product-labels";
 
 export type M2ProductRow = {
   productId: number;
   code: string;
   description: string;
   brand: string | null;
+  category: string | null;
   /** Richieste distinte che contengono pezzi di questo prodotto. */
   requests: number;
   pieces: number;
@@ -29,9 +32,21 @@ export type M2Shipment = {
   m2: number;
 };
 
+/** Riepilogo per marchio o categoria (label null = non indicato in anagrafica). */
+export type M2LabelRow = {
+  label: string | null;
+  /** Richieste distinte con pezzi di prodotti del gruppo (una richiesta con due marchi conta per entrambi). */
+  requests: number;
+  pieces: number;
+  m2: number;
+  products: number;
+};
+
 export type MonthlyM2Report = {
   month: string;
   rows: M2ProductRow[];
+  byBrand: M2LabelRow[];
+  byCategory: M2LabelRow[];
   shipments: M2Shipment[];
   totals: { requests: number; pieces: number; m2: number; products: number };
   /** Spedizioni del mese senza misure registrate (non contribuiscono ai m²). */
@@ -48,13 +63,32 @@ export async function getMonthlyM2Report(month: string): Promise<MonthlyM2Report
   const m2Sum = sql<number>`coalesce(sum(${pieces.areaM2}), 0)::float8`.mapWith(Number);
   const qtySum = sql<number>`coalesce(sum(${pieces.quantity}), 0)::int`.mapWith(Number);
 
-  const [rows, shipments] = await Promise.all([
+  const byLabel = (field: ProductLabelField) => {
+    const label = productLabelSql(field);
+    return db
+      .select({
+        label,
+        requests: sql<number>`count(distinct ${pieces.requestId})::int`.mapWith(Number),
+        pieces: qtySum,
+        m2: m2Sum,
+        products: sql<number>`count(distinct ${products.id})::int`.mapWith(Number),
+      })
+      .from(pieces)
+      .innerJoin(sampleRequests, eq(sampleRequests.id, pieces.requestId))
+      .innerJoin(products, eq(products.id, pieces.productId))
+      .where(inMonth)
+      .groupBy(label)
+      .orderBy(sql`sum(${pieces.areaM2}) desc`, sql`${label} nulls last`);
+  };
+
+  const [rows, shipments, byBrand, byCategory] = await Promise.all([
     db
       .select({
         productId: products.id,
         code: products.code,
         description: products.description,
-        brand: products.brand,
+        brand: productLabelSql("brand"),
+        category: productLabelSql("category"),
         requests: sql<number>`count(distinct ${pieces.requestId})::int`.mapWith(Number),
         pieces: qtySum,
         m2: m2Sum,
@@ -82,12 +116,16 @@ export async function getMonthlyM2Report(month: string): Promise<MonthlyM2Report
       .where(inMonth)
       .groupBy(sampleRequests.id, contacts.id)
       .orderBy(asc(effectiveShipmentDate), asc(sampleRequests.id)),
+    byLabel("brand"),
+    byLabel("category"),
   ]);
 
   const withPieces = shipments.filter((s) => s.pieces > 0).length;
   return {
     month,
     rows,
+    byBrand,
+    byCategory,
     shipments,
     totals: {
       requests: withPieces,

@@ -5,6 +5,7 @@ import { BRAND_SUGGESTIONS, CATEGORY_SUGGESTIONS, mergeSuggestions } from "@/com
 import { RecordActionForm } from "@/components/anagrafiche/form-helpers";
 import { StatTile } from "@/components/anagrafiche/list-ui";
 import { ProductForm } from "@/components/anagrafiche/product-form";
+import { ProductMissingLabels } from "@/components/anagrafiche/product-missing-labels";
 import { Alert } from "@/components/ui/alert";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader, DetailItem } from "@/components/ui/card";
@@ -13,10 +14,14 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { getAuthorizedUser, requireUser } from "@/lib/auth/session";
 import { formatDate, formatDateTime, formatEuro, formatKg, formatM2, formatNumber, requestCode } from "@/lib/format";
+import { cleanLabel, type ProductLabelField } from "@/lib/products/labels";
 import { can } from "@/lib/roles";
 import { parseDbId } from "@/lib/validation";
 import { deleteProduct } from "../../actions";
 import { getProductDetail, listProductFacets, param, type ProductDetail } from "../../_lib/queries";
+
+/** Card dei dati del prodotto: destinazione del link «Da completare». */
+const FORM_ID = "dati-prodotto";
 
 export async function generateMetadata({ params }: PageProps<"/anagrafiche/prodotti/[id]">): Promise<Metadata> {
   const id = parseDbId((await params).id);
@@ -36,6 +41,7 @@ export default async function ProductDetailPage({ params, searchParams }: PagePr
   const { product, stats, requests } = data;
   const canEdit = can(user.role, "registry.edit");
   const facets = canEdit ? await listProductFacets() : null;
+  const missingLabels = (["brand", "category"] as ProductLabelField[]).filter((f) => !cleanLabel(product[f]));
 
   return (
     <>
@@ -51,6 +57,7 @@ export default async function ProductDetailPage({ params, searchParams }: PagePr
             {product.active ? <Badge tone="green">Attivo</Badge> : <Badge tone="slate">Disattivato</Badge>}
             {product.brand ? <Badge tone="blue">{product.brand}</Badge> : null}
             {product.category ? <Badge tone="violet">{product.category}</Badge> : null}
+            <ProductMissingLabels missing={missingLabels} formId={canEdit ? FORM_ID : undefined} />
           </span>
         }
       />
@@ -64,7 +71,7 @@ export default async function ProductDetailPage({ params, searchParams }: PagePr
         ) : null}
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <Card className="lg:col-span-2">
+          <Card id={FORM_ID} className="scroll-mt-4 lg:col-span-2">
             <CardHeader
               title="Dati del prodotto"
               description={canEdit ? "I campi con * sono obbligatori." : "Sola lettura."}

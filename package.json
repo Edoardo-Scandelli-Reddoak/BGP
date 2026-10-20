@@ -15,7 +15,8 @@
     "db:seed": "tsx --conditions=react-server scripts/seed.ts",
     "db:seed-demo": "tsx --conditions=react-server scripts/seed-demo.ts",
     "import": "tsx --conditions=react-server scripts/import.ts",
-    "dev:session": "tsx --conditions=react-server scripts/dev-session.ts"
+    "dev:session": "tsx --conditions=react-server scripts/dev-session.ts",
+    "bgp:files": "tsx --conditions=react-server scripts/prepare-bgp-files.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

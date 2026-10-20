@@ -28,6 +28,7 @@ function print(label: string, s: ImportSummary) {
   if (s.agentsCreated !== undefined) console.log(`  agenti: ${s.agentsCreated} creati, ${s.agentsUpdated} aggiornati`);
   printRows("scartati", s.skipped);
   printRows("da verificare", s.warnings);
+  for (const n of s.notes ?? []) console.log(`  ${n}`);
 }
 
 async function main() {

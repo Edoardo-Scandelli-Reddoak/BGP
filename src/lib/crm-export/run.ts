@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { contacts, emailLog, pieces, products, sampleRequests, scheduledRuns } from "@/db/schema";
 import {
   CRM_COLUMNS,
+  CRM_MISSING_LABEL,
   crmCsv,
   crmFileName,
   type CrmColumn,
@@ -16,8 +17,10 @@ import { sendMail } from "@/lib/email/mailer";
 import { formatEmailList, parseEmailList } from "@/lib/email/recipients";
 import { textToHtml } from "@/lib/email/templates";
 import { formatMonth, todayIso } from "@/lib/format";
+import type { ProductLabelField } from "@/lib/products/labels";
 import { shippedBetween } from "@/lib/reports/conditions";
 import { monthEnd, monthStart } from "@/lib/reports/period";
+import { productLabelSql } from "@/lib/reports/product-labels";
 import { getSettings } from "@/lib/settings";
 
 /**
@@ -28,6 +31,15 @@ import { getSettings } from "@/lib/settings";
 const AGENT_NAME = sql<string>`coalesce(agent.name, 'Direzionale (senza agente)')`;
 // Stessa regola di cruscotto e storico: se il contatto è un agente, la richiesta è sua.
 const AGENT_JOIN = sql`agent.id = case when ${contacts.type} = 'AGENTE' then ${contacts.id} else ${contacts.agentId} end`;
+
+/**
+ * Marchio o categoria del prodotto (stessi valori del cruscotto); senza valore → «Non indicato».
+ * Testo nella query e non come parametro: la stessa espressione è usata anche nel GROUP BY.
+ */
+function labelName(field: ProductLabelField) {
+  const missing = sql.raw(`'${CRM_MISSING_LABEL.replaceAll("'", "''")}'`);
+  return sql<string>`coalesce(${productLabelSql(field)}, ${missing})`;
+}
 
 /** Righe dell'export del mese (m² nel mese della data di spedizione effettiva). */
 export async function getCrmExportRows(month: string, config: CrmExportConfig): Promise<CrmRow[]> {
@@ -40,8 +52,8 @@ export async function getCrmExportRows(month: string, config: CrmExportConfig): 
   const productCols = {
     codice: products.code,
     descrizione: products.description,
-    marchio: products.brand,
-    categoria: products.category,
+    marchio: productLabelSql("brand"),
+    categoria: productLabelSql("category"),
   };
   const customerCols = { cliente: contacts.name, paese: contacts.country, agente: AGENT_NAME };
   const from = <T extends Record<string, unknown>>(fields: T) =>
@@ -77,6 +89,15 @@ export async function getCrmExportRows(month: string, config: CrmExportConfig): 
         .groupBy(sql`agent.name`)
         .orderBy(sql`sum(${pieces.areaM2}) desc`);
       break;
+    case "MARCHIO":
+    case "CATEGORIA": {
+      const field = config.groupBy === "MARCHIO" ? "brand" : "category";
+      const name = labelName(field);
+      rows = await from({ [field === "brand" ? "marchio" : "categoria"]: name, ...measures })
+        .groupBy(name)
+        .orderBy(sql`sum(${pieces.areaM2}) desc`, name);
+      break;
+    }
   }
   return rows.map((r) => {
     const out: CrmRow = { mese: month };
@@ -101,7 +122,7 @@ export async function buildCrmExportFile(month: string, config: CrmExportConfig)
   ws.columns = config.columns.map((c) => ({
     header: config.header ? CRM_COLUMNS[c] : undefined,
     key: c,
-    width: c === "descrizione" ? 60 : c === "cliente" || c === "agente" ? 36 : 14,
+    width: c === "descrizione" ? 60 : c === "cliente" || c === "agente" ? 36 : c === "marchio" || c === "categoria" ? 24 : 14,
     // codici sempre come testo (10150E1 non deve diventare un numero)
     style: c === "codice" ? { numFmt: "@" } : c === "m2" ? { numFmt: "0.00" } : {},
   }));

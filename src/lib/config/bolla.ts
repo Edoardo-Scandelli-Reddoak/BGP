@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isItaly, normalizeCountry } from "@/lib/countries";
 import { SAMPLE_FORMATS, type SampleFormat } from "@/lib/sample-formats";
 
 /**
@@ -81,12 +82,12 @@ export function formatBollaNumber(n: number, year: number, config: Pick<BollaCon
     .replaceAll("{anno}", String(year));
 }
 
-const ITALY = new Set(["italia", "italy", "it", "ita", "italie", "italien"]);
-
-/** Paese di destinazione fuori dall'Italia (paese non indicato = non si può dire). */
+/**
+ * Paese di destinazione fuori dall'Italia (paese non indicato, anche «-», = non si può dire).
+ * L'Italia è riconosciuta in ogni forma («IT», «Italy», «ITALIA»…); un valore non riconosciuto conta come estero.
+ */
 export function isAbroad(country: string | null | undefined): boolean {
-  const c = country?.trim().toLowerCase();
-  return Boolean(c) && !ITALY.has(c!);
+  return normalizeCountry(country) !== null && !isItaly(country);
 }
 
 export type BollaRuleInput = {

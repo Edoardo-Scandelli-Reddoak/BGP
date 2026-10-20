@@ -36,13 +36,17 @@ describe("formatBollaNumber", () => {
 
 describe("isAbroad", () => {
   it("Italia in tutte le forme usate in anagrafica: non è estero", () => {
-    for (const c of ["Italia", "ITALIA", " italy ", "IT", "ita", "Italie", "Italien"]) {
+    for (const c of ["Italia", "ITALIA", " italy ", "IT", "ita", "Italie", "Italien", "Italia.", "Repubblica Italiana", "Italia (BG)"]) {
       expect(isAbroad(c), c).toBe(false);
     }
   });
 
+  it("San Marino e Città del Vaticano sono estero; un valore non riconosciuto conta come estero", () => {
+    for (const c of ["San Marino", "RSM", "SM", "Vaticano", "Frnce"]) expect(isAbroad(c), c).toBe(true);
+  });
+
   it("paese non indicato: non si può dire che sia estero", () => {
-    for (const c of [null, undefined, "", "   "]) expect(isAbroad(c), String(c)).toBe(false);
+    for (const c of [null, undefined, "", "   ", "-", "?"]) expect(isAbroad(c), String(c)).toBe(false);
   });
 
   it("altri paesi: estero", () => {

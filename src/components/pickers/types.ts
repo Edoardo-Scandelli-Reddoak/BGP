@@ -3,6 +3,8 @@ export type ProductOption = {
   id: number;
   code: string;
   description: string;
+  brand: string | null;
+  category: string | null;
   active: boolean;
 };
 
