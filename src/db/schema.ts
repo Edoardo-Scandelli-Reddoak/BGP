@@ -188,7 +188,16 @@ export const sampleRequests = pgTable(
     contactId: integer("contact_id")
       .notNull()
       .references(() => contacts.id, { onDelete: "restrict" }),
+    /** Destinatario della spedizione: ragione sociale della ditta o cognome e nome. */
+    recipientName: text("recipient_name"),
+    /** Se il destinatario è una ditta: nominativo della persona a cui è destinata («alla c.a. di»). */
+    attentionOf: text("attention_of"),
+    /** Indirizzo di consegna (via, CAP, città, provincia e paese se estero), senza il destinatario. */
     destinationAddress: text("destination_address").notNull().default(""),
+    /** Preavviso telefonico prima della consegna: null = non ancora indicato. */
+    phoneNotice: boolean("phone_notice"),
+    /** Numero da usare per il preavviso telefonico. */
+    phoneNoticeNumber: text("phone_notice_number"),
     notes: text("notes"),
     /** "Bolla di consegna richiesta": la logistica deve preparare il documento prima del ritiro. */
     deliveryFormRequired: boolean("delivery_form_required").notNull().default(false),
@@ -242,6 +251,10 @@ export const requestItems = pgTable(
       .notNull()
       .references(() => products.id, { onDelete: "restrict" }),
     quantity: integer("quantity").notNull().default(1),
+    /** Formato del campione (doghe intere, mezze doghe, mazzetta…): valori in src/lib/sample-formats.ts. */
+    sampleFormat: text("sample_format"),
+    /** Dettaglio del formato (obbligatorio per «Altro»). */
+    formatNote: text("format_note"),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

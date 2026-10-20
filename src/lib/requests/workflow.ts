@@ -11,8 +11,15 @@ export type WorkflowSnapshot = {
   status: RequestStatus;
   contactId: number | null;
   contactHasEmail: boolean;
+  /** Destinatario (ragione sociale o cognome e nome). */
+  recipientName: string | null;
   destinationAddress: string | null;
+  /** Preavviso telefonico: null = non ancora indicato. */
+  phoneNotice: boolean | null;
+  phoneNoticeNumber: string | null;
   itemsCount: number;
+  /** Righe senza formato del campione (o «Altro» senza descrizione). */
+  itemsMissingFormat: number;
   packagesCount: number | null;
   weightKg: number | null;
   piecesCount: number;
@@ -78,9 +85,22 @@ export function transitionProblems(
   }
   switch (to) {
     case "IN_PREPARAZIONE":
+      // Dati che BGP chiede per prendere in carico una richiesta (Italia ed estero).
       if (!s.contactId) problems.push("Seleziona il contatto (cliente o agente).");
-      if (!s.destinationAddress?.trim()) problems.push("Indica l'indirizzo di destinazione.");
+      if (!s.recipientName?.trim()) problems.push("Indica il destinatario (ragione sociale o cognome e nome).");
+      if (!s.destinationAddress?.trim()) problems.push("Indica l'indirizzo di consegna.");
       if (s.itemsCount === 0) problems.push("Aggiungi almeno un prodotto richiesto.");
+      if (s.itemsMissingFormat > 0) {
+        problems.push(
+          s.itemsMissingFormat === 1
+            ? "Indica il formato del campione (doghe intere, mezze doghe, mazzetta…) per il prodotto che ne è privo."
+            : `Indica il formato del campione per ${s.itemsMissingFormat} prodotti.`,
+        );
+      }
+      if (s.phoneNotice === null) problems.push("Indica se serve il preavviso telefonico prima della consegna.");
+      if (s.phoneNotice === true && !s.phoneNoticeNumber?.trim()) {
+        problems.push("Indica il numero di telefono per il preavviso.");
+      }
       break;
     case "PRONTA_RITIRO":
       if (!s.packagesCount || s.packagesCount < 1) problems.push("Indica il numero di colli.");

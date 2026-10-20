@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { emailLog, emailTemplates, type ContactType, type EmailKind, type Language } from "@/db/schema";
 import { formatDate, formatNumber, requestCode } from "@/lib/format";
+import { sampleFormatText } from "@/lib/sample-formats";
 import { generateBollaPdf } from "@/lib/pdf/bolla";
 import { getAttachmentFile, getRequestDetail, type RequestDetail } from "@/lib/requests/queries";
 import { getSettings, type AppSettings } from "@/lib/settings";
@@ -33,10 +34,29 @@ export function trackingUrl(template: string | null | undefined, tracking: strin
   return template.replaceAll("{tracking}", encodeURIComponent(tracking.replace(/\s+/g, "")));
 }
 
-function productLines(detail: RequestDetail): string {
+/** "- 2 × Mezze doghe — Pavimento in legno … (CODICE)": formato nella lingua del destinatario. */
+function productLines(detail: RequestDetail, lang: Language): string {
   return detail.items
-    .map((i) => `- ${i.quantity} × ${i.product.description || i.product.code} (${i.product.code})`)
+    .map((i) => {
+      const format = sampleFormatText(i.sampleFormat, i.formatNote, lang);
+      const name = `${i.product.description || i.product.code} (${i.product.code})`;
+      return `- ${i.quantity} × ${format ? `${format} — ` : ""}${name}`;
+    })
     .join("\n");
+}
+
+const PHONE_NOTICE_TEXT: Record<Language, { yes: string; no: string }> = {
+  it: { yes: "Sì, tel.", no: "No" },
+  en: { yes: "Yes, phone", no: "No" },
+  fr: { yes: "Oui, tél.", no: "Non" },
+  de: { yes: "Ja, Tel.", no: "Nein" },
+};
+
+/** "Sì, tel. 328 3556565" / "No" / "" se non indicato. */
+export function phoneNoticeText(phoneNotice: boolean | null, number: string | null, lang: Language = "it"): string {
+  if (phoneNotice === null) return "";
+  const t = PHONE_NOTICE_TEXT[lang];
+  return phoneNotice ? `${t.yes} ${number?.trim() ?? ""}`.trim() : t.no;
 }
 
 const YES_NO: Record<Language, [string, string]> = {
@@ -58,8 +78,11 @@ export function buildTemplateVars(
     cliente: detail.contact.name,
     email_cliente: formatEmailList(parseEmailList(detail.contact.email)),
     agente: detail.contact.agent?.name ?? "",
-    prodotti: productLines(detail),
+    prodotti: productLines(detail, lang),
+    destinatario: detail.recipientName?.trim() || detail.contact.name,
+    alla_ca: detail.attentionOf?.trim() ?? "",
     destinazione: detail.destinationAddress.replace(/\s*\n\s*/g, ", "),
+    preavviso: phoneNoticeText(detail.phoneNotice, detail.phoneNoticeNumber, lang),
     note: detail.notes?.trim() ?? "",
     bolla_richiesta: YES_NO[lang][detail.deliveryFormRequired ? 0 : 1],
     colli: detail.packagesCount ? String(detail.packagesCount) : "",

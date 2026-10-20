@@ -19,9 +19,10 @@ import { sendRequestNotification, type NotificationResult } from "@/lib/email/no
 import { parseEmailList } from "@/lib/email/recipients";
 import { TIME_ZONE, todayIso } from "@/lib/format";
 import { can } from "@/lib/roles";
+import { SAMPLE_FORMATS, sampleFormatMissing } from "@/lib/sample-formats";
 import { nextStatus, previousStatus, STATUS_LABELS } from "@/lib/status";
 import { dbId } from "@/lib/validation";
-import { mergeItems, optionalText } from "./input";
+import { mergeItems, normalizeMultiline, optionalText } from "./input";
 import {
   bollaSatisfied,
   EDITABLE_IN,
@@ -71,15 +72,38 @@ const isoDate = z.preprocess(
     .transform((v) => (v ? v : null)),
 );
 
-export const requestItemInput = z.object({
-  productId: requiredId("Prodotto non valido"),
-  quantity: z.coerce.number().int("Quantità non valida").min(1, "Quantità minima 1").max(9999, "Quantità troppo alta"),
-  notes: optionalText(500),
-});
+export const requestItemInput = z
+  .object({
+    productId: requiredId("Prodotto non valido"),
+    quantity: z.coerce.number().int("Quantità non valida").min(1, "Quantità minima 1").max(9999, "Quantità troppo alta"),
+    /** Formato del campione: si può salvare una bozza senza, ma serve per inviarla al magazzino. */
+    sampleFormat: z.preprocess(
+      (v) => (v === "" ? null : v),
+      z.enum(SAMPLE_FORMATS, { error: "Formato non valido" }).nullish(),
+    ),
+    formatNote: optionalText(200),
+    notes: optionalText(500),
+  })
+  .refine((i) => i.sampleFormat !== "ALTRO" || Boolean(i.formatNote), {
+    path: ["formatNote"],
+    message: "Descrivi il formato richiesto",
+  });
 
 export const requestInfoInput = z.object({
   contactId: requiredId("Seleziona il contatto"),
-  destinationAddress: z.string().trim().min(1, "Indica l'indirizzo di destinazione").max(2000),
+  /** Ragione sociale della ditta o cognome e nome del destinatario. */
+  recipientName: z.string().trim().min(1, "Indica il destinatario").max(200, "Massimo 200 caratteri"),
+  /** Persona a cui è destinata la spedizione, se il destinatario è una ditta. */
+  attentionOf: optionalText(200),
+  destinationAddress: z
+    .string()
+    .trim()
+    .min(1, "Indica l'indirizzo di consegna")
+    .max(2000)
+    .transform(normalizeMultiline),
+  /** Preavviso telefonico prima della consegna: null = non ancora indicato. */
+  phoneNotice: z.boolean().nullish().transform((v) => v ?? null),
+  phoneNoticeNumber: optionalText(50),
   notes: optionalText(5000),
   deliveryFormRequired: z.boolean(),
   /** Data di ricezione (se la richiesta è arrivata per telefono/email in un giorno precedente). */
@@ -88,6 +112,10 @@ export const requestInfoInput = z.object({
     .array(requestItemInput)
     .min(1, "Aggiungi almeno un prodotto")
     .max(100, "Troppi prodotti in una sola richiesta"),
+}).superRefine((v, ctx) => {
+  if (v.phoneNotice === true && !v.phoneNoticeNumber) {
+    ctx.addIssue({ code: "custom", path: ["phoneNoticeNumber"], message: "Indica il numero per il preavviso" });
+  }
 });
 export type RequestInfoInput = z.input<typeof requestInfoInput>;
 
@@ -132,8 +160,11 @@ async function loadSnapshot(id: number) {
     with: { contact: { columns: { id: true, email: true } } },
   });
   if (!req) return null;
-  const [[items], [pieceAgg], [ddt]] = await Promise.all([
-    db.select({ n: count() }).from(requestItems).where(eq(requestItems.requestId, id)),
+  const [itemRows, [pieceAgg], [ddt]] = await Promise.all([
+    db
+      .select({ sampleFormat: requestItems.sampleFormat, formatNote: requestItems.formatNote })
+      .from(requestItems)
+      .where(eq(requestItems.requestId, id)),
     db.select({ n: count() }).from(pieces).where(eq(pieces.requestId, id)),
     db
       .select({ n: count() })
@@ -144,8 +175,12 @@ async function loadSnapshot(id: number) {
     status: req.status,
     contactId: req.contactId,
     contactHasEmail: parseEmailList(req.contact?.email).length > 0,
+    recipientName: req.recipientName,
     destinationAddress: req.destinationAddress,
-    itemsCount: items.n,
+    phoneNotice: req.phoneNotice,
+    phoneNoticeNumber: req.phoneNoticeNumber,
+    itemsCount: itemRows.length,
+    itemsMissingFormat: itemRows.filter((i) => sampleFormatMissing(i.sampleFormat, i.formatNote)).length,
     packagesCount: req.packagesCount,
     weightKg: req.weightKg,
     piecesCount: pieceAgg.n,
@@ -250,7 +285,11 @@ export async function createRequest(
       .insert(sampleRequests)
       .values({
         contactId: input.contactId,
+        recipientName: input.recipientName,
+        attentionOf: input.attentionOf,
         destinationAddress: input.destinationAddress,
+        phoneNotice: input.phoneNotice,
+        phoneNoticeNumber: input.phoneNotice === false ? null : input.phoneNoticeNumber,
         notes: input.notes,
         deliveryFormRequired: input.deliveryFormRequired,
         receivedAt: receivedAtFrom(input.receivedAt),
@@ -290,11 +329,13 @@ export async function updateRequestInfo(actor: Actor, id: number, rawInput: Requ
   if (contactErr && input.contactId !== current.contactId) return fail(contactErr, { contactId: contactErr });
 
   const items = mergeItems(input.items);
-  const before = new Map(current.items.map((i) => [i.productId, i]));
+  const itemKey = (i: { productId: number; sampleFormat?: string | null; formatNote?: string | null }) =>
+    [i.productId, i.sampleFormat ?? "", i.formatNote?.trim() || ""].join("|");
+  const before = new Map(current.items.map((i) => [itemKey(i), i]));
   const itemsChanged =
     items.length !== current.items.length ||
     items.some((i) => {
-      const b = before.get(i.productId);
+      const b = before.get(itemKey(i));
       return !b || b.quantity !== i.quantity || (b.notes?.trim() || null) !== (i.notes ?? null);
     });
 
@@ -319,7 +360,11 @@ export async function updateRequestInfo(actor: Actor, id: number, rawInput: Requ
       .update(sampleRequests)
       .set({
         contactId: input.contactId,
+        recipientName: input.recipientName,
+        attentionOf: input.attentionOf,
         destinationAddress: input.destinationAddress,
+        phoneNotice: input.phoneNotice,
+        phoneNoticeNumber: input.phoneNotice === false ? null : input.phoneNoticeNumber,
         notes: input.notes,
         deliveryFormRequired: input.deliveryFormRequired,
         ...(input.receivedAt ? { receivedAt: receivedAtFrom(input.receivedAt) } : {}),

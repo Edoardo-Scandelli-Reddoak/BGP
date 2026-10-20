@@ -39,7 +39,10 @@ export type TemplateVars = {
   email_cliente: string;
   agente: string;
   prodotti: string;
+  destinatario: string;
+  alla_ca: string;
   destinazione: string;
+  preavviso: string;
   note: string;
   bolla_richiesta: string;
   colli: string;
@@ -61,8 +64,11 @@ export const PLACEHOLDERS: { key: keyof TemplateVars; label: string }[] = [
   { key: "cliente", label: "Nome del contatto (cliente o agente)" },
   { key: "email_cliente", label: "Email del contatto" },
   { key: "agente", label: "Agente di riferimento" },
-  { key: "prodotti", label: "Elenco prodotti con quantità (una riga per prodotto)" },
-  { key: "destinazione", label: "Indirizzo di destinazione" },
+  { key: "prodotti", label: "Elenco prodotti con quantità e formato (una riga per prodotto)" },
+  { key: "destinatario", label: "Destinatario (ragione sociale o cognome e nome)" },
+  { key: "alla_ca", label: "Alla cortese attenzione di (persona presso la ditta)" },
+  { key: "destinazione", label: "Indirizzo di consegna" },
+  { key: "preavviso", label: "Preavviso telefonico (es. «Sì, tel. 328 3556565» oppure «No»)" },
   { key: "note", label: "Note della richiesta" },
   { key: "bolla_richiesta", label: "Bolla di consegna richiesta (Sì/No)" },
   { key: "colli", label: "Numero colli" },
@@ -92,9 +98,12 @@ export const DEFAULT_TEMPLATES: Record<
         "",
         "Richiesta: {codice_richiesta}",
         "Cliente: {cliente}",
-        "Prodotti:",
+        "Prodotti (quantità × formato):",
         "{prodotti}",
-        "Destinazione: {destinazione}",
+        "Destinatario: {destinatario}",
+        "Alla c.a.: {alla_ca}",
+        "Indirizzo: {destinazione}",
+        "Preavviso telefonico: {preavviso}",
         "Bolla di consegna richiesta: {bolla_richiesta}",
         "Note: {note}",
         "",
@@ -111,7 +120,10 @@ export const DEFAULT_TEMPLATES: Record<
         "",
         "Richiesta: {codice_richiesta}",
         "Cliente: {cliente}",
-        "Destinazione: {destinazione}",
+        "Destinatario: {destinatario}",
+        "Alla c.a.: {alla_ca}",
+        "Indirizzo: {destinazione}",
+        "Preavviso telefonico: {preavviso}",
         "Prodotti:",
         "{prodotti}",
         "N° colli: {colli} — Peso: {peso_kg} kg",
@@ -267,7 +279,10 @@ const emptyVars: Record<keyof TemplateVars, ""> = {
   email_cliente: "",
   agente: "",
   prodotti: "",
+  destinatario: "",
+  alla_ca: "",
   destinazione: "",
+  preavviso: "",
   note: "",
   bolla_richiesta: "",
   colli: "",
