@@ -54,7 +54,7 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
           </>
         }
       />
-      <CardBody className="grid gap-6 md:grid-cols-3">
+      <CardBody className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <Block title="Destinatario">
           <p className="font-semibold text-slate-900">{r.contact.name}</p>
           {r.contact.company && r.contact.company !== r.contact.name ? <p>{r.contact.company}</p> : null}

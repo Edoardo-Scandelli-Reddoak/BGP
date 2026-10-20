@@ -30,7 +30,7 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
         </Alert>
       ) : null}
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <div>
           <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Contatto</h3>
           <ContactSummary

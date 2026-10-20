@@ -66,7 +66,7 @@ export default async function ProductDetailPage({ params, searchParams }: PagePr
           </Alert>
         ) : null}
 
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <Card className="lg:col-span-2">
             <CardHeader
               title="Dati del prodotto"
@@ -188,7 +188,7 @@ export default async function ProductDetailPage({ params, searchParams }: PagePr
 function ProductReadOnly({ data }: { data: ProductDetail }) {
   const p = data.product;
   return (
-    <dl className="grid gap-5 sm:grid-cols-2">
+    <dl className="grid grid-cols-1 gap-5 sm:grid-cols-2">
       <DetailItem label="Codice articolo">
         <span className="font-mono">{p.code}</span>
       </DetailItem>

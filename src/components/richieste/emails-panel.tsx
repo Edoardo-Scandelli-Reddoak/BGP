@@ -39,7 +39,7 @@ export function EmailsPanel({ emails }: { emails: EmailLogEntry[] }) {
                 </div>
                 <EmailStatusBadge status={e.status} />
               </div>
-              <dl className="mt-2 grid gap-1 text-sm sm:grid-cols-[5.5rem_1fr]">
+              <dl className="mt-2 grid grid-cols-1 gap-1 text-sm sm:grid-cols-[5.5rem_minmax(0,1fr)]">
                 <dt className="text-slate-500">A</dt>
                 <dd className="min-w-0 break-words text-slate-900">{e.toAddresses}</dd>
                 {e.ccAddresses ? (

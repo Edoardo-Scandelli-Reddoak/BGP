@@ -81,7 +81,7 @@ function ContactFields({
   const agentOptions = agents.filter((a) => a.id !== initial.id && (a.active || a.id === initial.agentId));
 
   return (
-    <div className="grid gap-5 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
       <fieldset className="sm:col-span-2">
         <legend className="text-sm font-medium text-slate-700">
           Tipo di contatto<span className="ml-0.5 text-red-600">*</span>

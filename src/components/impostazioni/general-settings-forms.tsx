@@ -49,12 +49,12 @@ export function CompanySettingsForm({ values }: { values: CompanySettingsValues 
       <div key={JSON.stringify(values)} className="space-y-6">
         <fieldset className="space-y-4">
           <legend className="text-sm font-semibold text-slate-900">Intestazione della bolla</legend>
-          <div className="grid gap-4 md:grid-cols-2">{COMPANY_FIELDS.map(renderField)}</div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">{COMPANY_FIELDS.map(renderField)}</div>
         </fieldset>
         <fieldset className="space-y-4 border-t border-slate-100 pt-6">
           <legend className="sr-only">Valori predefiniti della bolla</legend>
           <p className="text-sm font-semibold text-slate-900">Valori predefiniti della bolla</p>
-          <div className="grid gap-4 md:grid-cols-3">{BOLLA_FIELDS.map(renderField)}</div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">{BOLLA_FIELDS.map(renderField)}</div>
         </fieldset>
       </div>
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center">

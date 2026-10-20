@@ -41,7 +41,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="border-t border-white/10 pt-4">{footer}</div>
       </aside>
       <MobileNav sections={sections} counts={counts} footer={footer} />
-      <main className="flex-1 lg:pl-64">
+      <main className="min-w-0 flex-1 lg:pl-64">
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">{children}</div>
       </main>
     </div>

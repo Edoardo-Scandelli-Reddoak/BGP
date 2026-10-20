@@ -238,7 +238,7 @@ export async function LogisticsPanel({
         {header}
         <CardBody className="space-y-4">
           {notices}
-          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <DetailItem label="Corriere">{request.carrier?.name}</DetailItem>
             <DetailItem label="Data di ritiro">{formatDate(request.pickupDate)}</DetailItem>
             <DetailItem label="Data di spedizione">{formatDate(request.shipmentDate)}</DetailItem>
@@ -286,7 +286,7 @@ export async function LogisticsPanel({
 
       {completed ? (
         <CardBody className="border-t border-slate-100">
-          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <DetailItem label="Corriere">{request.carrier?.name}</DetailItem>
             <DetailItem label="Data di ritiro">{formatDate(request.pickupDate)}</DetailItem>
             <DetailItem label="Numero di tracking">

@@ -74,7 +74,7 @@ export default async function TemplatesSettingsPage({ searchParams }: PageProps<
   const defaultRequest = recent.find((r) => PREVIEW_STATUSES[kind].includes(r.status)) ?? recent[0];
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
       <nav aria-label="Template disponibili" className="space-y-4">
         {KINDS.map((k) => (
           <div key={k}>

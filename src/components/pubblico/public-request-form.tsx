@@ -113,7 +113,7 @@ function PublicRequestForm({
       <Section title="Chi sei?">
         <fieldset>
           <legend className="sr-only">Chi sei?</legend>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {(
               [
                 ["AGENTE", "Agente BGP", "Richiedo i campioni per un mio cliente."],
@@ -163,7 +163,7 @@ function PublicRequestForm({
             aria-invalid={invalid("requesterName")}
           />
         </Field>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field
             label="Email"
             htmlFor="requesterEmail"
@@ -256,7 +256,7 @@ function PublicRequestForm({
               aria-invalid={invalid("address")}
             />
           </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Paese" htmlFor="country" error={err("country")}>
               <Input
                 id="country"

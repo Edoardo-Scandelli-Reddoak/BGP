@@ -44,7 +44,7 @@ export default async function PublicFormSettingsPage() {
         </Alert>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader
             title="Link da condividere"

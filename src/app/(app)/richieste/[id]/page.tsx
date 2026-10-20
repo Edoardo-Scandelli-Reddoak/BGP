@@ -193,7 +193,7 @@ export default async function RichiestaDettaglioPage({ params, searchParams }: P
 
       <StatusStepper status={request.status} receivedAt={request.receivedAt} events={request.events} />
 
-      <div className="mt-6 grid items-start gap-6 lg:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">
           <NextStepCard
             requestId={request.id}

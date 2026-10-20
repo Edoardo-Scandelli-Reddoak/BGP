@@ -104,15 +104,15 @@ export function PreparationForm({
     <form onSubmit={onSubmit} className="space-y-5" aria-label="Colli e peso">
       <input type="hidden" name="requestId" value={requestId} />
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="N° colli" htmlFor={`${id}-packages`} error={fieldError(state, "packagesCount")}>
           <StepperInput
             id={`${id}-packages`}
             name="packagesCount"
             label="numero colli"
-            min={0}
+            min={1}
             max={999}
-            placeholder="0"
+            placeholder="es. 1"
             value={packages}
             onChange={setPackages}
             invalid={Boolean(fieldError(state, "packagesCount"))}

@@ -28,7 +28,7 @@ export function EmailSettingsForm({ values }: { values: EmailSettingsValues }) {
       <div key={version} className="space-y-6">
         <fieldset className="space-y-4">
           <legend className="text-sm font-semibold text-slate-900">Destinatari interni</legend>
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field
               label="Magazzino — avviso «nuovo campionario da preparare»"
               htmlFor="warehouseEmails"
@@ -79,7 +79,7 @@ export function EmailSettingsForm({ values }: { values: EmailSettingsValues }) {
         <fieldset className="space-y-4 border-t border-slate-100 pt-6">
           <legend className="sr-only">Mittente e firma</legend>
           <p className="text-sm font-semibold text-slate-900">Mittente e firma</p>
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field
               label="Mittente"
               htmlFor="mailFrom"

@@ -29,7 +29,7 @@ function CarrierFields({
   fieldError: (name: string) => string | undefined;
 }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_8rem]">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_8rem]">
       <Field label="Nome" htmlFor={`${idPrefix}-name`} required error={fieldError("name")}>
         <Input
           id={`${idPrefix}-name`}

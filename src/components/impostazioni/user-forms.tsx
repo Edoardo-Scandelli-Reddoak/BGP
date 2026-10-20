@@ -68,7 +68,7 @@ export function CreateUserForm({ minPasswordLength }: { minPasswordLength: numbe
       className="space-y-4"
     >
       <ActionMessage state={state} />
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Nome e cognome" htmlFor="new-name" required error={fieldError("name")}>
           <Input id="new-name" name="name" required maxLength={120} autoComplete="off" aria-invalid={!!fieldError("name") || undefined} />
         </Field>
@@ -137,7 +137,7 @@ export function EditUserForm({ user, isSelf }: { user: EditableUser; isSelf: boo
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <ActionMessage state={state} />
-      <div key={version} className="grid gap-4 sm:grid-cols-2">
+      <div key={version} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Nome e cognome" htmlFor="edit-name" required error={fieldError("name")}>
           <Input
             id="edit-name"
@@ -227,7 +227,7 @@ export function ResetPasswordForm({
   return (
     <form ref={formRef} onSubmit={onSubmit} onReset={() => setVisible(false)} className="space-y-4">
       <ActionMessage state={state} />
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field
           label="Nuova password"
           htmlFor="reset-password"

@@ -23,7 +23,7 @@ export type ContactSummaryData = {
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[7rem_1fr] gap-2 text-sm">
+    <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-2 text-sm">
       <dt className="text-slate-500">{label}</dt>
       <dd className="min-w-0 break-words text-slate-900">{children}</dd>
     </div>

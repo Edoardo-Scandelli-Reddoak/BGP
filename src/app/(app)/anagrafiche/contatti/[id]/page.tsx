@@ -96,7 +96,7 @@ export default async function ContactDetailPage({ params, searchParams }: PagePr
           </Alert>
         ) : null}
 
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <Card className="lg:col-span-2">
             <CardHeader
               title="Dati del contatto"
@@ -254,7 +254,7 @@ function ContactReadOnly({ data }: { data: ContactDetail }) {
   const c = data.contact;
   const emails = parseEmailList(c.email);
   return (
-    <dl className="grid gap-5 sm:grid-cols-2">
+    <dl className="grid grid-cols-1 gap-5 sm:grid-cols-2">
       <DetailItem label="Tipo">{CONTACT_TYPE_LABELS[c.type]}</DetailItem>
       <DetailItem label="Azienda / studio">{c.company}</DetailItem>
       <DetailItem label="Email" className="sm:col-span-2">

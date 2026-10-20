@@ -29,7 +29,7 @@ export default async function ImportPage() {
           agenti e {formatNumber(counts.products, 0)} prodotti ({formatNumber(counts.activeProducts, 0)} attivi).
         </Alert>
 
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader title="Contatti" description="Clienti e agenti, come nell'export Airtable «Lista clienti»." />
             <CardBody className="space-y-5">

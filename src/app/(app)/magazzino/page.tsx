@@ -41,7 +41,7 @@ export default async function WarehouseQueuePage() {
             />
           </Card>
         ) : (
-          <ul className="grid gap-4 lg:grid-cols-2">
+          <ul className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {queue.map((card) => (
               <li key={card.id}>
                 <QueueCard card={card} />
@@ -80,7 +80,7 @@ export default async function WarehouseQueuePage() {
             <p className="py-4 text-center text-sm text-slate-500">Nessuna richiesta pronta per il ritiro.</p>
           ) : (
             <>
-              <ul className="grid gap-4 lg:grid-cols-2">
+              <ul className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {ready.map((card) => (
                   <li key={card.id}>
                     <QueueCard card={card} />

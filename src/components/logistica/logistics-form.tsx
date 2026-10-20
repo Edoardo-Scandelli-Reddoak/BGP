@@ -27,7 +27,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <fieldset className="min-w-0">
       <legend className="mb-3 text-sm font-semibold text-slate-900">{title}</legend>
-      <div className="grid gap-4 sm:grid-cols-2">{children}</div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>
     </fieldset>
   );
 }
