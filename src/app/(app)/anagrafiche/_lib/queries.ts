@@ -182,7 +182,7 @@ export const getContactDetail = cache(async (id: number) => {
         status: sampleRequests.status,
         receivedAt: sampleRequests.receivedAt,
         shipmentDate: sampleRequests.shipmentDate,
-        itemsCount: sql<number>`(select count(*) from request_items ri where ri.request_id = "sample_requests"."id")`.mapWith(Number),
+        itemsCount: sql<number>`(select count(distinct ri.product_id) from request_items ri where ri.request_id = "sample_requests"."id")`.mapWith(Number),
         m2: sql<number>`(select coalesce(sum(p.area_m2), 0) from pieces p where p.request_id = "sample_requests"."id")`.mapWith(Number),
       })
       .from(sampleRequests)

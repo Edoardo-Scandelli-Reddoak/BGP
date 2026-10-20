@@ -23,6 +23,7 @@ export type OpenListRow = {
   source: "INTERNO" | "MODULO_PUBBLICO";
   /** Destinatario (ragione sociale o cognome e nome); null nelle richieste non ancora completate. */
   recipientName: string | null;
+  destinationCountry: string | null;
   destinationAddress: string;
   /** Preavviso telefonico prima della consegna: null = non ancora indicato. */
   phoneNotice: boolean | null;
@@ -95,6 +96,7 @@ export async function getOpenRequests(f: OpenListFilters) {
       receivedAt: sampleRequests.receivedAt,
       source: sampleRequests.source,
       recipientName: sampleRequests.recipientName,
+      destinationCountry: sampleRequests.destinationCountry,
       destinationAddress: sampleRequests.destinationAddress,
       phoneNotice: sampleRequests.phoneNotice,
       phoneNoticeNumber: sampleRequests.phoneNoticeNumber,

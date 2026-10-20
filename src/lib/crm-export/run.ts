@@ -26,6 +26,8 @@ import { getSettings } from "@/lib/settings";
  */
 
 const AGENT_NAME = sql<string>`coalesce(agent.name, 'Direzionale (senza agente)')`;
+// Stessa regola di cruscotto e storico: se il contatto è un agente, la richiesta è sua.
+const AGENT_JOIN = sql`agent.id = case when ${contacts.type} = 'AGENTE' then ${contacts.id} else ${contacts.agentId} end`;
 
 /** Righe dell'export del mese (m² nel mese della data di spedizione effettiva). */
 export async function getCrmExportRows(month: string, config: CrmExportConfig): Promise<CrmRow[]> {
@@ -49,7 +51,7 @@ export async function getCrmExportRows(month: string, config: CrmExportConfig): 
       .innerJoin(sampleRequests, eq(sampleRequests.id, pieces.requestId))
       .innerJoin(products, eq(products.id, pieces.productId))
       .innerJoin(contacts, eq(contacts.id, sampleRequests.contactId))
-      .leftJoin(sql`${contacts} as agent`, sql`agent.id = ${contacts.agentId}`)
+      .leftJoin(sql`${contacts} as agent`, AGENT_JOIN)
       .where(inMonth)
       .$dynamic();
 
@@ -131,11 +133,12 @@ export type CrmSendResult = {
 /**
  * Invia l'export del mese: email con il file ai destinatari configurati e/o POST al webhook
  * (JSON firmato: intestazione X-BGP-Signature = "sha256=" + HMAC SHA-256 del corpo con il segreto).
- * `force` invia anche se i canali automatici sono disattivati (pulsante «Invia ora» → solo email).
+ * Con `recipients` («Invia ora») l'email va a quei destinatari; il webhook parte se `webhook` è true
+ * (predefinito: solo negli invii automatici). `email: false` salta l'email (nuovo tentativo del solo webhook).
  */
 export async function sendCrmExport(
   month: string,
-  options: { triggeredById?: number | null; recipients?: string[] } = {},
+  options: { triggeredById?: number | null; recipients?: string[]; email?: boolean; webhook?: boolean } = {},
 ): Promise<CrmSendResult> {
   const settings = await getSettings();
   const config = settings.crmExport;
@@ -147,7 +150,10 @@ export async function sendCrmExport(
     webhook: { status: "DISATTIVATO" },
   };
 
-  const to = parseEmailList(options.recipients ?? (config.autoSend.enabled ? config.autoSend.recipients : []));
+  const to =
+    options.email === false
+      ? []
+      : parseEmailList(options.recipients ?? (config.autoSend.enabled ? config.autoSend.recipients : []));
   if (to.length) {
     const subject = `Export m² campioni — ${formatMonth(month)}`;
     const body = [
@@ -182,7 +188,7 @@ export async function sendCrmExport(
     result.email = outcome.status === "ERRORE" ? { status: "ERRORE", detail: outcome.error } : { status: outcome.status };
   }
 
-  if (config.webhook.enabled && config.webhook.url && !options.recipients) {
+  if (config.webhook.enabled && config.webhook.url && (options.webhook ?? !options.recipients)) {
     result.webhook = await postWebhook(month, config);
   }
   return result;
@@ -214,10 +220,24 @@ async function postWebhook(month: string, config: CrmExportConfig): Promise<CrmS
 
 const JOB = "crm-export";
 
+/** Tentativi massimi dell'invio automatico di un mese (uno all'ora con lo scheduler interno). */
+export const CRM_EXPORT_MAX_ATTEMPTS = 5;
+
+type RunDetail = CrmSendResult & { attempts?: number };
+
+function parseRunDetail(detail: string | null): RunDetail | null {
+  try {
+    return detail ? (JSON.parse(detail) as RunDetail) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Attività programmata: dal giorno configurato del mese invia l'export del mese precedente,
  * una sola volta per mese (anche con più istanze: la riga in scheduled_runs fa da lucchetto).
- * Restituisce null se non c'era nulla da fare.
+ * Se un canale fallisce, ai passaggi successivi si riprova solo quel canale (email o webhook),
+ * fino a CRM_EXPORT_MAX_ATTEMPTS volte. Restituisce null se non c'era nulla da fare.
  */
 export async function runDueCrmExport(today = todayIso()): Promise<CrmSendResult | null> {
   const { crmExport: config } = await getSettings();
@@ -225,25 +245,60 @@ export async function runDueCrmExport(today = todayIso()): Promise<CrmSendResult
   if (!channelsOn) return null;
   if (Number(today.slice(8, 10)) < config.autoSend.day) return null;
   const month = previousMonthIso(today);
+
+  let runId: number;
+  let previous: RunDetail | null = null;
   const claimed = await db
     .insert(scheduledRuns)
     .values({ job: JOB, period: month, status: "IN_CORSO" })
     .onConflictDoNothing()
     .returning({ id: scheduledRuns.id });
-  if (claimed.length === 0) return null;
+  if (claimed.length) {
+    runId = claimed[0].id;
+  } else {
+    // Mese già gestito: si riprova solo se l'ultimo tentativo è fallito e ci sono tentativi residui.
+    const [row] = await db
+      .select()
+      .from(scheduledRuns)
+      .where(and(eq(scheduledRuns.job, JOB), eq(scheduledRuns.period, month)))
+      .limit(1);
+    previous = parseRunDetail(row?.detail ?? null);
+    if (!row || row.status !== "ERRORE" || (previous?.attempts ?? 1) >= CRM_EXPORT_MAX_ATTEMPTS) return null;
+    const reclaimed = await db
+      .update(scheduledRuns)
+      .set({ status: "IN_CORSO" })
+      .where(and(eq(scheduledRuns.id, row.id), eq(scheduledRuns.status, "ERRORE")))
+      .returning({ id: scheduledRuns.id });
+    if (reclaimed.length === 0) return null;
+    runId = row.id;
+  }
+
+  const attempts = (previous?.attempts ?? 0) + 1;
   try {
-    const result = await sendCrmExport(month);
-    const failed = result.email.status === "ERRORE" || result.webhook.status === "ERRORE";
+    // Al nuovo tentativo si ripetono solo i canali falliti (o mai partiti per un errore generale).
+    const retryEmail = !previous || previous.email?.status === "ERRORE" || !previous.email;
+    const retryWebhook = !previous || previous.webhook?.status === "ERRORE" || !previous.webhook;
+    const result = await sendCrmExport(month, { email: retryEmail, webhook: retryWebhook });
+    const merged: RunDetail = {
+      ...result,
+      email: retryEmail ? result.email : (previous?.email ?? result.email),
+      webhook: retryWebhook ? result.webhook : (previous?.webhook ?? result.webhook),
+      attempts,
+    };
+    const failed = merged.email.status === "ERRORE" || merged.webhook.status === "ERRORE";
     await db
       .update(scheduledRuns)
-      .set({ status: failed ? "ERRORE" : "OK", detail: JSON.stringify(result) })
-      .where(eq(scheduledRuns.id, claimed[0].id));
-    return result;
+      .set({ status: failed ? "ERRORE" : "OK", detail: JSON.stringify(merged) })
+      .where(eq(scheduledRuns.id, runId));
+    return merged;
   } catch (err) {
     await db
       .update(scheduledRuns)
-      .set({ status: "ERRORE", detail: err instanceof Error ? err.message : String(err) })
-      .where(and(eq(scheduledRuns.id, claimed[0].id)));
+      .set({
+        status: "ERRORE",
+        detail: JSON.stringify({ attempts, error: err instanceof Error ? err.message : String(err) }),
+      })
+      .where(eq(scheduledRuns.id, runId));
     throw err;
   }
 }

@@ -497,7 +497,8 @@ export async function createPublicRequest(
 
     // Paese di consegna in un campo a parte (l'indirizzo resta com'è stato scritto); se non indicato
     // vale quello del contatto, come nel back office. Le regole della bolla si applicano subito.
-    const destinationCountry = input.country ?? contact.country;
+    // Il modulo propone «Italia»: un campo svuotato vale come paese del contatto, se noto.
+    const destinationCountry = input.country ?? contact.country ?? "Italia";
     const bolla = applyBollaRules(
       false,
       { destinationCountry, itemFormats: items.map((i) => i.sampleFormat), packagesCount: null },

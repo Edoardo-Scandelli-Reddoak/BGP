@@ -133,7 +133,8 @@ describe("computeRequestCost", () => {
     const extraCosts = { m_a: "5", m_b: 0, m_c: -3, m_d: 1.005 } as unknown as Record<string, number>;
     const res = computeRequestCost(input({ extraCosts }), config);
     expect(res.lines.map((l) => l.key)).toEqual(["m_d"]);
-    expect(res.total).toBeCloseTo(1, 2);
+    // 1,005 → 1,01: arrotondamento ai centesimi come in Postgres
+    expect(res.total).toBe(1.01);
   });
 
   it("arrotonda ogni riga e il totale al centesimo", () => {

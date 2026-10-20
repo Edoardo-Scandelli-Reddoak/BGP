@@ -202,8 +202,13 @@ describe.skipIf(SKIP_REASON !== null)("configurazioni di BGP (integrazione con i
   });
 
   /** Esecuzioni programmate e email dell'export create da questi test (anche di esecuzioni interrotte). */
+  // Lo scheduler del server di sviluppo può partire mentre i test hanno attivato l'invio automatico
+  // (dal giorno 28 in poi): si eliminano anche le esecuzioni create durante i test.
+  const testsStartedAt = new Date();
+
   async function cleanupCrmRuns() {
     await db.delete(scheduledRuns).where(and(eq(scheduledRuns.job, CRM_JOB), inArray(scheduledRuns.period, CRM_PERIODS)));
+    await db.delete(scheduledRuns).where(and(eq(scheduledRuns.job, CRM_JOB), gte(scheduledRuns.createdAt, testsStartedAt)));
     await db.delete(emailLog).where(and(eq(emailLog.kind, "EXPORT_CRM"), like(emailLog.toAddresses, "vitest-%@example.test%")));
   }
 

@@ -247,8 +247,16 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
           di ritiro).
           {hasCosts ? (
             <>
-              {" "}Il costo di una spedizione è la somma delle voci attive in {costsSettings}:{" "}
-              {LIST_FORMAT.format(costComponents.map((c) => c.label))}.
+              {costComponents.length === 1 ? (
+                <>
+                  {" "}Il costo di una spedizione è la voce «{costComponents[0].label}», l&apos;unica attiva in {costsSettings}.
+                </>
+              ) : (
+                <>
+                  {" "}Il costo di una spedizione è la somma delle voci attive in {costsSettings}:{" "}
+                  {LIST_FORMAT.format(costComponents.map((c) => c.label))}.
+                </>
+              )}
             </>
           ) : null}
         </Alert>
@@ -264,7 +272,7 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
 
         <BreakdownCard
           id="clienti"
-          title="Costi e volumi per cliente"
+          title={hasCosts ? "Costi e volumi per cliente" : "Volumi per cliente"}
           description={hasCosts ? "Ordinati per costo totale" : "Ordinati per m² spediti"}
           total={byContact.total}
           shown={byContact.rows.length}

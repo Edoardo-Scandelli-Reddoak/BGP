@@ -57,7 +57,7 @@ cruscotto usano tutti la stessa regola.
 | Magazzino (×2, da telefono) | Coda magazzino | Colli, peso, pezzi, «pronta per il ritiro» |
 | Logistica | Pronte per il ritiro · Bolle da preparare · Spedite senza tracking | Spedizione, bolla, DDT, tracking, costi |
 | Direzione | Cruscotto · Storico completo | Sola lettura: stato, volumi, costi per cliente, conteggi per contatto/prodotto/paese; storico ed export CSV con destinatario e formato dei campioni |
-| Ufficio CRM | Report m² mensile | m² per prodotto del mese, export CSV per il CRM |
+| Ufficio CRM | Report m² mensile | m² del mese ed export per il CRM (formato, colonne e invio automatico configurabili in Impostazioni → Export CRM) |
 | Amministratore | tutto | Utenti, destinatari email, template, corrieri, dati della bolla, registro email e le [impostazioni di BGP](#impostazioni-di-bgp): costi per cliente, bolla di consegna, export m² per il CRM |
 
 Agenti e clienti inviano le richieste dal **modulo pubblico** `/richiedi-campioni`, senza login.

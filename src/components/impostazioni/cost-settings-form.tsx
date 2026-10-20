@@ -408,7 +408,14 @@ export function CostSettingsForm({
         </div>
 
         <div className="lg:sticky lg:top-6 lg:self-start">
-          <CostCalculator model={model} config={config} sample={sample} />
+          {/* Invio in un campo dell'esempio: non deve salvare la configurazione. */}
+          <div
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") e.preventDefault();
+            }}
+          >
+            <CostCalculator model={model} config={config} sample={sample} />
+          </div>
         </div>
       </div>
 

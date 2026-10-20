@@ -82,7 +82,7 @@ describe("crmCsv", () => {
   it("colonne nell'ordine scelto, anche solo alcune", () => {
     const cfg = config({ groupBy: "PRODOTTO_CLIENTE", columns: ["m2", "cliente", "mese", "codice"] });
     const row: CrmRow = { ...ROW, cliente: "Legnoarte Srl", agente: "Mario Rossi" };
-    expect(lines(crmCsv([row], cfg))).toEqual(["m2;Cliente;Mese;Codice", `1,23;Legnoarte Srl;2026-09;"=""10150E1"""`]);
+    expect(lines(crmCsv([row], cfg))).toEqual(["m2;Cliente;Mese;Codice", `1,23;Legnoarte Srl;"=""2026-09""";"=""10150E1"""`]);
   });
 
   it("codici che Excel trasformerebbe in numeri, date o percentuali restano testo", () => {

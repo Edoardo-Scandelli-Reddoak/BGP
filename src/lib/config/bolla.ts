@@ -56,12 +56,21 @@ export const bollaConfigSchema = z.object({
     .min(1, "Indica il formato del numero")
     .max(40, "Massimo 40 caratteri")
     .refine((v) => v.includes("{numero}"), "Il formato deve contenere {numero}"),
-  numberPadding: z.coerce.number().int().min(1).max(8),
+  numberPadding: z.coerce
+    .number()
+    .int("Numero di cifre non valido")
+    .min(1, "Almeno 1 cifra")
+    .max(8, "Al massimo 8 cifre"),
   rules: z.object({
     always: z.boolean(),
     abroad: z.boolean(),
     formats: z.array(z.enum(SAMPLE_FORMATS)).max(SAMPLE_FORMATS.length),
-    minPackages: z.coerce.number().int().min(1, "Minimo 1 collo").max(999).nullable(),
+    minPackages: z.coerce
+      .number()
+      .int("Numero di colli non valido")
+      .min(1, "Minimo 1 collo")
+      .max(999, "Massimo 999 colli")
+      .nullable(),
   }),
 });
 

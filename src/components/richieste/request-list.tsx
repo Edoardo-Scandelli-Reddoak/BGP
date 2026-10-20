@@ -1,3 +1,4 @@
+import { isAbroad } from "@/lib/config/bolla";
 import Link from "next/link";
 import type { OpenListRow } from "@/app/(app)/richieste/list-query";
 import { Badge, StatusBadge } from "@/components/ui/badge";
@@ -80,6 +81,7 @@ function Destination({ row }: { row: OpenListRow }) {
           {address}
         </span>
       ) : null}
+      {isAbroad(row.destinationCountry) ? <Badge tone="violet">Estero: {row.destinationCountry}</Badge> : null}
       <PhoneNoticeBadge row={row} />
     </span>
   );

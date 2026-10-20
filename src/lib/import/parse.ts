@@ -206,7 +206,7 @@ export const IMPORT_COLUMNS = {
   brand: ["Marchio", "Brand"],
   category: ["Categoria", "Category"],
   // le intestazioni si confrontano senza spazi né simboli: «Prezzo m²» diventa «prezzom»
-  pricePerM2: ["Prezzo_m2", "Prezzo al m2", "Prezzo m²", "Prezzo m2", "Prezzo al m²", "Prezzo/m2", "Price per m2", "Price m2"],
+  pricePerM2: ["Prezzo_m2", "Prezzo al m2", "Prezzo m²", "Prezzo m2", "Prezzo al m²", "Prezzo/m2", "Prezzo al mq", "Prezzo mq", "Prezzo/mq", "Prezzo_mq", "Price per m2", "Price m2"],
 };
 
 export function parseContactRows(rows: RawRow[]): {

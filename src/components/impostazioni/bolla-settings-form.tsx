@@ -200,9 +200,9 @@ export function BollaSettingsForm({
           {lostReady > 0 ? (
             <Alert tone="warning" title="Effetto sulle richieste in corso">
               La modalità vale anche per le richieste non ancora spedite: {lostReady}{" "}
-              {lostReady === 1 ? "richiesta ha" : "richieste hanno"} la bolla pronta con la modalità attuale e con questa
-              {lostReady === 1 ? " tornerebbe" : " tornerebbero"} tra le «bolle da preparare» (ad esempio bolla generata dal
-              sistema ma senza DDT del gestionale).
+              {lostReady === 1 ? "richiesta ha" : "richieste hanno"} la bolla pronta con la modalità attuale, ma con questa
+              andrebbe di nuovo preparata (ad esempio bolla generata dal sistema ma senza DDT del gestionale): la
+              logistica la ritroverà tra le «bolle da preparare» quando la richiesta sarà pronta per il ritiro.
             </Alert>
           ) : null}
 

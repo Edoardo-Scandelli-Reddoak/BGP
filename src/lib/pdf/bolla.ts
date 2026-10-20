@@ -110,7 +110,10 @@ class BollaWriter {
     readonly detail: RequestDetail,
     readonly settings: AppSettings,
     readonly docNumber: string,
+    /** Data di emissione: per la bolla generata è quella di generazione, fissa su ogni copia. */
     readonly docDate: string,
+    /** Data del trasporto (spedizione o ritiro), vuota finché non è nota. */
+    readonly transportDate: string,
   ) {}
 
   /* --- primitive (coordinate dall'alto) --- */
@@ -411,7 +414,7 @@ class BollaWriter {
       ["Aspetto dei beni", settings.bollaAspetto, 110],
       ["Porto", settings.bollaPorto, 150],
       ["Peso lordo (kg)", detail.weightKg ? formatNumber(detail.weightKg, 2) : "", 90],
-      ["Data del trasporto", this.docDate, CONTENT_W - 64 - 110 - 150 - 90],
+      ["Data del trasporto", this.transportDate, CONTENT_W - 64 - 110 - 150 - 90],
     ];
     let x = MARGIN;
     for (const [title, value, w] of cells) {
@@ -479,7 +482,10 @@ export async function generateBollaPdf(detail: RequestDetail, settings: AppSetti
   const clean = makeSanitizer(fonts.regular);
   const code = requestCode(detail.id);
   const docNumber = bollaDocNumber(detail);
-  const docDate = formatDate(detail.shipmentDate || detail.pickupDate || detail.bollaGeneratedAt || todayIso());
+  const transportDate = formatDate(detail.shipmentDate || detail.pickupDate);
+  const docDate = detail.bollaGeneratedAt
+    ? formatDate(detail.bollaGeneratedAt)
+    : transportDate || formatDate(todayIso());
 
   pdf.setTitle(`Bolla di consegna ${docNumber} - ${code}`);
   pdf.setAuthor(settings.companyName);
@@ -489,7 +495,7 @@ export async function generateBollaPdf(detail: RequestDetail, settings: AppSetti
   pdf.setLanguage("it-IT");
   pdf.setCreationDate(new Date());
 
-  const writer = new BollaWriter(pdf, fonts, clean, detail, settings, clean(docNumber), docDate);
+  const writer = new BollaWriter(pdf, fonts, clean, detail, settings, clean(docNumber), docDate, transportDate);
   writer.newPage();
   writer.drawItems();
   writer.drawPhoneNotice();

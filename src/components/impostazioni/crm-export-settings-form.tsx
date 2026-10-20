@@ -697,6 +697,10 @@ function CrmPreview({
                 startLoading(() => router.replace(`/impostazioni/export-crm?mese=${value}`, { scroll: false }));
               }}
               className="h-8 w-40 py-1"
+              onKeyDown={(e) => {
+                // Invio nel mese dell'anteprima: non deve salvare la configurazione.
+                if (e.key === "Enter") e.preventDefault();
+              }}
               aria-busy={loading}
             />
             <a href={downloadHref} className={buttonClasses("secondary", "sm")} download>

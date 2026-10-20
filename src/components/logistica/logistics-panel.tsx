@@ -7,10 +7,10 @@ import { Alert } from "@/components/ui/alert";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, DetailItem } from "@/components/ui/card";
 import type { SessionUser } from "@/lib/auth/session";
-import { formatBollaNumber, isAbroad, type BollaMode } from "@/lib/config/bolla";
+import { isAbroad, type BollaMode } from "@/lib/config/bolla";
 import type { CostConfig, CostLine } from "@/lib/config/costs";
 import { confirmationRecipients, trackingUrl } from "@/lib/email/notifications";
-import { formatDate, formatDateTime, formatEuro, formatKg, formatM2, LANGUAGE_LABELS, todayIso } from "@/lib/format";
+import { formatDate, formatDateTime, formatEuro, formatKg, formatM2, LANGUAGE_LABELS } from "@/lib/format";
 import { requestCost } from "@/lib/requests/costs";
 import type { RequestDetail } from "@/lib/requests/queries";
 import {
@@ -21,6 +21,7 @@ import {
   type WorkflowSnapshot,
 } from "@/lib/requests/workflow";
 import { can } from "@/lib/roles";
+import { peekNextBollaNumber } from "@/lib/requests/service";
 import { getSetting } from "@/lib/settings";
 import { BollaAutoReason, bollaInstructions, BollaStatusBadge } from "./bolla-info";
 import { ConfirmationActions } from "./confirmation-actions";
@@ -33,7 +34,7 @@ import { formatBytes } from "./utils";
 const DESCRIPTIONS = {
   PRONTA_RITIRO: "Indica corriere e data di ritiro, prepara la bolla se richiesta, poi segna la richiesta come spedita.",
   SPEDITA: "Inserisci numero di tracking e data di spedizione: parte l'email di conferma al cliente e la richiesta si chiude.",
-  COMPLETATA: "Spedizione conclusa. Restano modificabili data di spedizione, numero DDT, costi e note.",
+  COMPLETATA: "Spedizione conclusa. Restano modificabili data di spedizione, costi e note.",
 } as const;
 
 /** Pagina delle impostazioni dei costi (solo amministratori). */
@@ -145,16 +146,19 @@ export async function LogisticsPanel({
   const editable = can(user.role, "logistics.work") && EDITABLE_IN.logistics.includes(status);
   const canDownload =
     can(user.role, "logistics.work") || can(user.role, "requests.manage") || can(user.role, "management.view");
-  const [carrierOptions, bollaConfig, costConfig] = await Promise.all([
+  const [carrierOptions, bollaConfig, costConfig, nextBollaNumber] = await Promise.all([
     editable ? loadCarriers(request.carrierId) : Promise.resolve([]),
     getSetting("bollaConfig"),
     getSetting("costConfig"),
+    peekNextBollaNumber(),
   ]);
   const mode: BollaMode = bollaConfig.mode;
   const bollaNumber = request.bollaNumber?.trim() || null;
   const autoReason = request.deliveryFormAutoReason?.trim() || null;
-  // Il PDF non assegna numeri: con la sola bolla generata si scarica dopo «Genera bolla».
-  const pdfAvailable = canDownload && (mode === "ENTRAMBE" || (mode === "GENERATA" && bollaNumber !== null));
+  // Il PDF non assegna numeri: con la sola bolla generata, prima della spedizione si scarica dopo
+  // «Genera bolla»; le richieste già partite restano scaricabili.
+  const pdfAvailable =
+    canDownload && (mode === "ENTRAMBE" || (mode === "GENERATA" && (bollaNumber !== null || status !== "PRONTA_RITIRO")));
 
   const trackingHref = request.trackingNumber?.trim()
     ? trackingUrl(request.carrier?.trackingUrlTemplate, request.trackingNumber) || null
@@ -471,7 +475,8 @@ export async function LogisticsPanel({
             </div>
           ) : null}
 
-          {mode !== "GESTIONALE" ? (
+          {/* La bolla si genera solo prima della spedizione (dopo consumerebbe un numero per merce già partita). */}
+          {mode !== "GESTIONALE" && (bollaNumber || (status === "PRONTA_RITIRO" && request.deliveryFormRequired)) ? (
             <div className="flex flex-col gap-3 rounded-lg bg-slate-50 px-4 py-3 ring-1 ring-inset ring-slate-200 sm:flex-row sm:items-center sm:justify-between">
               {bollaNumber ? (
                 <>
@@ -490,8 +495,7 @@ export async function LogisticsPanel({
                   <div className="min-w-0 text-sm">
                     <p className="font-medium text-slate-900">Bolla generata dal sistema</p>
                     <p className="text-xs text-slate-500">
-                      Assegna il prossimo numero progressivo (es. {formatBollaNumber(1, Number(todayIso().slice(0, 4)), bollaConfig)})
-                      e la segna come pronta.
+                      Assegna il numero progressivo {nextBollaNumber} e la segna come pronta.
                       {mode === "ENTRAMBE" ? " Senza generarla, il PDF riporta il numero DDT o il codice della richiesta." : ""}
                     </p>
                   </div>

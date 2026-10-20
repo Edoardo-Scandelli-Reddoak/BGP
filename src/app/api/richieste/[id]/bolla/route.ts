@@ -29,7 +29,9 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/api/richiest
   }
 
   const settings = await getSettings();
-  if (settings.bollaConfig.mode === "GENERATA" && !detail.bollaNumber?.trim()) {
+  // Prima della spedizione, con la bolla «generata dal sistema», serve il numero progressivo.
+  // Le richieste già partite (anche prima di questa impostazione) restano scaricabili.
+  if (settings.bollaConfig.mode === "GENERATA" && detail.status === "PRONTA_RITIRO" && !detail.bollaNumber?.trim()) {
     return Response.json(
       { error: "Bolla non ancora generata: usa «Genera bolla» nel pannello Spedizione della richiesta." },
       { status: 409 },

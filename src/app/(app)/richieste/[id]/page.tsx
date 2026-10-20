@@ -160,10 +160,12 @@ export default async function RichiestaDettaglioPage({ params, searchParams }: P
   const code = requestCode(request.id);
   const contactHref = can(user.role, "registry.view") ? `/anagrafiche/contatti/${request.contact.id}` : null;
 
+  // Lo stesso prodotto in due formati conta una volta sola.
+  const productCount = new Set(request.items.map((i) => i.productId)).size;
   const infoPanel = (
     <RequestInfoCard
       edit={editConfig(request, user, bollaConfig.rules)}
-      description={`${request.items.length} prodott${request.items.length === 1 ? "o" : "i"} · contatto, destinatario e consegna`}
+      description={`${productCount} prodott${productCount === 1 ? "o" : "i"} · contatto, destinatario e consegna`}
     >
       <RequestInfoView request={request} canViewRegistry={can(user.role, "registry.view")} />
     </RequestInfoCard>
@@ -239,3 +241,4 @@ export default async function RichiestaDettaglioPage({ params, searchParams }: P
     </>
   );
 }
+

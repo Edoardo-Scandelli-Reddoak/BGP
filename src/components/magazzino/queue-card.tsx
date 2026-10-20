@@ -106,7 +106,7 @@ export function QueueCard({ card }: { card: WarehouseCard }) {
             {/* «2× MEZZE DOGHE» e sotto «CODICE — descrizione»: il formato prima di tutto, è ciò che si prepara.
                 Formato e codice su righe separate: una nota di formato lunga si accorcia senza nascondere il codice. */}
             <span className="min-w-0 flex-1 leading-6">
-              <span className="line-clamp-2 block" title={sampleFormatText(item.sampleFormat, item.formatNote) || undefined}>
+              <span className="line-clamp-2" title={sampleFormatText(item.sampleFormat, item.formatNote) || undefined}>
                 <SampleFormatLabel format={item.sampleFormat} note={item.formatNote} />
               </span>
               <span className="block truncate" title={item.description ? `${item.code} — ${item.description}` : undefined}>

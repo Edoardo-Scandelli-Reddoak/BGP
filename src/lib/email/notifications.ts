@@ -149,11 +149,21 @@ export function confirmationRecipients(contact: ConfirmationContact): { to: stri
 }
 
 /** File da allegare alla conferma di spedizione: DDT caricato, altrimenti la bolla generata se richiesta. */
+/**
+ * Allegato della conferma di spedizione, secondo la modalità della bolla (Impostazioni → Bolla):
+ * - «generata»: la bolla del sistema se ha il numero progressivo, altrimenti un DDT caricato in precedenza;
+ * - «gestionale»: solo il DDT caricato (la bolla è il DDT di BGP: senza file non si allega nulla);
+ * - «entrambe»: il DDT caricato, altrimenti la bolla del sistema se richiesta.
+ */
 async function shipmentAttachments(detail: RequestDetail, settings: AppSettings): Promise<OutgoingAttachment[]> {
-  if (detail.ddtAttachment) {
+  const mode = settings.bollaConfig.mode;
+  const generated = Boolean(detail.bollaNumber?.trim());
+  if (detail.ddtAttachment && !(mode === "GENERATA" && generated)) {
     const file = await getAttachmentFile(detail.ddtAttachment.id);
     if (file) return [{ filename: file.fileName, content: Buffer.from(file.data), contentType: file.mimeType }];
   }
+  if (mode === "GESTIONALE") return [];
+  if (mode === "GENERATA" && !generated) return [];
   if (detail.deliveryFormRequired) {
     const pdf = await generateBollaPdf(detail, settings);
     return [

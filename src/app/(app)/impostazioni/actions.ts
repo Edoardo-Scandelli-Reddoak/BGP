@@ -718,24 +718,31 @@ export async function sendCrmExportNowAction(): Promise<ActionResult> {
     return fail("Nessun destinatario salvato: aggiungi almeno un indirizzo in «Invio automatico», salva e riprova.");
   }
   const month = previousMonthIso();
-  const result = await sendCrmExport(month, { triggeredById: actor.id, recipients });
+  // «Invia ora» ripete anche il webhook se è attivo (serve a ritentare un invio automatico fallito).
+  const result = await sendCrmExport(month, { triggeredById: actor.id, recipients, webhook: config.webhook.enabled });
   revalidatePath("/", "layout");
 
   const label = formatMonth(month);
   const empty =
     result.rows === 0 ? " Attenzione: nel mese non risultano campioni spediti, il file contiene solo l'intestazione." : "";
+  const webhook =
+    result.webhook.status === "OK"
+      ? " Inviato anche al webhook del CRM."
+      : result.webhook.status === "ERRORE"
+        ? ` Attenzione: il webhook del CRM non ha risposto correttamente (${result.webhook.detail ?? "errore"}).`
+        : "";
   switch (result.email.status) {
     case "ERRORE":
-      return fail(`Invio non riuscito: ${result.email.detail ?? "errore del server di posta"}.`);
+      return fail(`Invio non riuscito: ${result.email.detail ?? "errore del server di posta"}.${webhook}`);
     case "SIMULATA":
       return {
         ok: true,
-        message: `Modalità prova attiva (EMAIL_DRY_RUN): l'export di ${label} è stato registrato nel registro email ma non inviato.${empty}`,
+        message: `Modalità prova attiva (EMAIL_DRY_RUN): l'export di ${label} è stato registrato nel registro email ma non inviato.${empty}${webhook}`,
       };
     case "INVIATA":
       return {
         ok: true,
-        message: `Export di ${label} inviato a ${recipients.join(", ")} (${result.rows} righe).${empty}`,
+        message: `Export di ${label} inviato a ${recipients.join(", ")} (${result.rows} righe).${empty}${webhook}`,
       };
     default:
       return fail("Nessuna email inviata: controlla i destinatari salvati.");

@@ -401,12 +401,19 @@ function PublicRequestForm({
             />
           </Field>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Paese" htmlFor="country" error={err("country")} hint="Da indicare se la consegna è all'estero.">
+            <Field
+              label="Paese di consegna"
+              htmlFor="country"
+              error={err("country")}
+              required
+              hint="Cambialo se la consegna è all'estero."
+            >
               <Input
                 id="country"
                 name="country"
                 maxLength={80}
-                placeholder="Italia"
+                defaultValue="Italia"
+                required
                 list="country-suggestions"
                 autoComplete={isAgent ? "off" : "country-name"}
                 className={TEXT_FIELD}

@@ -105,7 +105,7 @@ export const requestInfoInput = z.object({
     .max(2000)
     .transform(normalizeMultiline),
   /** Paese di consegna (se assente si usa quello del contatto). */
-  destinationCountry: optionalText(60),
+  destinationCountry: optionalText(80),
   /** Preavviso telefonico prima della consegna: null = non ancora indicato. */
   phoneNotice: z.boolean().nullish().transform((v) => v ?? null),
   phoneNoticeNumber: optionalText(50),
@@ -441,6 +441,8 @@ export async function updateRequestInfo(actor: Actor, id: number, rawInput: Requ
       deliveryFormReady: current.deliveryFormReady,
       ddtNumber: current.ddtNumber,
       hasDdtAttachment: await hasDdtAttachment(id),
+      bollaNumber: current.bollaNumber,
+      bollaMode: (await getSetting("bollaConfig")).mode,
     });
     if (!bollaReady) {
       const n = await sendRequestNotification("AVVISO_BOLLA", id, actor.id);
@@ -561,6 +563,8 @@ export async function updateLogisticsData(actor: Actor, id: number, rawInput: Lo
   const parsed = logisticsInput.safeParse(rawInput);
   if (!parsed.success) return fail("Controlla i campi evidenziati.", zodFieldErrors(parsed.error.issues));
   const input = parsed.data;
+  // Campi non inviati dal form (es. numero DDT nascosto con la bolla «generata»): restano com'erano.
+  const sent = (key: keyof LogisticsInput) => rawInput[key] !== undefined;
 
   const [current] = await db.select().from(sampleRequests).where(eq(sampleRequests.id, id)).limit(1);
   if (!current) return fail(NOT_FOUND);
@@ -602,9 +606,9 @@ export async function updateLogisticsData(actor: Actor, id: number, rawInput: Lo
     await db
       .update(sampleRequests)
       .set({
-        ddtNumber: input.ddtNumber,
-        shippingCost: input.shippingCost ?? null,
-        logisticsNotes: input.logisticsNotes,
+        ...(sent("ddtNumber") ? { ddtNumber: input.ddtNumber } : {}),
+        ...(sent("shippingCost") ? { shippingCost: input.shippingCost ?? null } : {}),
+        ...(sent("logisticsNotes") ? { logisticsNotes: input.logisticsNotes } : {}),
         shipmentDate,
         ...(extraCosts ? { extraCosts } : {}),
       })
@@ -619,10 +623,10 @@ export async function updateLogisticsData(actor: Actor, id: number, rawInput: Lo
       pickupDate: input.pickupDate,
       trackingNumber: input.trackingNumber,
       shipmentDate: input.shipmentDate,
-      ddtNumber: input.ddtNumber,
+      ...(sent("ddtNumber") ? { ddtNumber: input.ddtNumber } : {}),
       ...(input.deliveryFormReady !== undefined ? { deliveryFormReady: input.deliveryFormReady } : {}),
-      shippingCost: input.shippingCost ?? null,
-      logisticsNotes: input.logisticsNotes,
+      ...(sent("shippingCost") ? { shippingCost: input.shippingCost ?? null } : {}),
+      ...(sent("logisticsNotes") ? { logisticsNotes: input.logisticsNotes } : {}),
       ...(extraCosts ? { extraCosts } : {}),
     })
     .where(eq(sampleRequests.id, id));
@@ -734,6 +738,14 @@ export async function generateBolla(actor: Actor, id: number): Promise<Result<{ 
   });
   if (!number) return fail("Bolla non generata: riprova.");
   return { ok: true, data: { number }, message: `Bolla N° ${number} generata.` };
+}
+
+/** Numero che riceverà la prossima bolla generata (anteprima: non lo riserva). */
+export async function peekNextBollaNumber(): Promise<string> {
+  const config = await getSetting("bollaConfig");
+  const year = Number(todayIso().slice(0, 4));
+  const [row] = await db.select({ n: bollaCounters.lastNumber }).from(bollaCounters).where(eq(bollaCounters.year, year));
+  return formatBollaNumber((row?.n ?? 0) + 1, year, config);
 }
 
 /* ------------------------------------------------------------------ */

@@ -492,14 +492,14 @@ export function RequestForm({
             label="Paese di consegna"
             htmlFor={`${uid}-country`}
             error={errors.destinationCountry}
-            hint="Precompilato con il paese del contatto: modificalo se i campioni vanno all'estero o in un altro paese."
+            hint="Precompilato con il paese del contatto: modificalo se i campioni vanno in un paese diverso."
             className="sm:max-w-sm"
           >
             <Input
               id={`${uid}-country`}
               name="destinationCountry"
               list={`${uid}-countries`}
-              maxLength={60}
+              maxLength={80}
               autoComplete="off"
               placeholder={fallbackCountry || "Es. Italia"}
               value={country}

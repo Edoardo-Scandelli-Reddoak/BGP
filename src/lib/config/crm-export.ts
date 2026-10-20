@@ -84,17 +84,21 @@ export const crmExportConfigSchema = z
       .string()
       .trim()
       .min(1, "Indica il nome del file")
-      .max(80)
+      .max(80, "Massimo 80 caratteri")
       .regex(/^[\w{}\-. ]+$/, "Usa solo lettere, numeri, spazi, - _ . e {mese}"),
     autoSend: z.object({
       enabled: z.boolean(),
-      recipients: z.array(z.string().email("Email non valida")).max(10),
-      day: z.coerce.number().int().min(1).max(28),
+      recipients: z.array(z.string().email("Email non valida")).max(10, "Massimo 10 destinatari"),
+      day: z.coerce
+        .number()
+        .int("Giorno non valido")
+        .min(1, "Giorno tra 1 e 28")
+        .max(28, "Giorno tra 1 e 28 (vale per tutti i mesi)"),
     }),
     webhook: z.object({
       enabled: z.boolean(),
-      url: z.string().trim().max(500),
-      secret: z.string().max(200),
+      url: z.string().trim().max(500, "Indirizzo troppo lungo"),
+      secret: z.string().max(200, "Segreto troppo lungo"),
     }),
   })
   .superRefine((c, ctx) => {
@@ -107,7 +111,7 @@ export const crmExportConfigSchema = z
         message: `Colonne non disponibili con questo raggruppamento: ${bad.map((b) => CRM_COLUMNS[b]).join(", ")}`,
       });
     }
-    if (c.separator === "," && c.decimal === ",") {
+    if (c.format === "CSV" && c.separator === "," && c.decimal === ",") {
       ctx.addIssue({ code: "custom", path: ["decimal"], message: "Con il separatore «,» usa il punto per i decimali" });
     }
     if (c.autoSend.enabled && c.autoSend.recipients.length === 0) {
@@ -122,7 +126,7 @@ export const crmExportConfigSchema = z
 export type CrmRow = Partial<Record<CrmColumn, string | number | null>>;
 
 /** Colonne che contengono codici: da proteggere dalle conversioni automatiche di Excel. */
-const TEXT_COLUMNS: CrmColumn[] = ["codice"];
+const TEXT_COLUMNS: CrmColumn[] = ["codice", "mese"];
 const EXCEL_COERCED = /^(?:[+-]?\d+(?:[.,]\d+)?(?:e[+-]?\d+)?%?|\d+[/:.-]\d+(?:[/:.-]\d+)?)$/i;
 const FORMULA_START = /^[=+\-@\t\r]/;
 

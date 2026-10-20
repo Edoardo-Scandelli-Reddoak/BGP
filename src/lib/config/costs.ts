@@ -82,7 +82,11 @@ export type CostInput = {
 
 export type CostLine = { key: string; label: string; amount: number; detail?: string };
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+/** Arrotonda ai centesimi come Postgres (4,815 → 4,82, senza gli errori dei numeri in virgola mobile). */
+const round2 = (n: number) => {
+  const s = n.toPrecision(12);
+  return s.includes("e") ? Math.round(n * 100) / 100 : Number(`${Math.round(Number(`${s}e2`))}e-2`);
+};
 
 /** Costo di una richiesta secondo la configurazione: righe delle voci attive e totale. */
 export function computeRequestCost(input: CostInput, config: CostConfig): { total: number; lines: CostLine[] } {

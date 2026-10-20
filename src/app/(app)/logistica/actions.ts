@@ -104,7 +104,8 @@ export async function saveLogisticsData(id: number, _prev: State, formData: Form
     pickupDate: text(formData, "pickupDate"),
     trackingNumber: text(formData, "trackingNumber"),
     shipmentDate: text(formData, "shipmentDate"),
-    ddtNumber: text(formData, "ddtNumber"),
+    // Campo assente dal form (bolla «generata»): il numero DDT salvato non si tocca.
+    ddtNumber: formData.has("ddtNumber") ? text(formData, "ddtNumber") : undefined,
     shippingCost,
     extraCosts: extra.values,
     logisticsNotes: text(formData, "logisticsNotes"),

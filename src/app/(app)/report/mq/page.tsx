@@ -153,7 +153,7 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
             <p className="text-slate-900">
               <span className="font-medium">Export per il CRM:</span> {exportInfo.summary}
             </p>
-            <p className="mt-0.5 text-xs text-slate-500">
+            <p className="mt-0.5 text-xs break-words text-slate-500">
               {exportInfo.details} · {exportInfo.sending}
             </p>
             {crmExport.groupBy !== "PRODOTTO" ? (
