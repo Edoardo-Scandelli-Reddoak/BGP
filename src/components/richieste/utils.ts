@@ -1,18 +1,8 @@
-import { dateFromIso, TIME_ZONE, todayIso } from "@/lib/format";
+/** Conferma prima di inviare al magazzino una richiesta con contatto creato dal modulo pubblico e non ancora verificato. */
+export const CONTACT_REVIEW_CONFIRM =
+  "Il contatto è stato creato dal modulo pubblico e non è ancora verificato (lingua, email, agente). Inviare comunque la richiesta al magazzino?";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Data (fuso di Roma) in formato YYYY-MM-DD. */
-export function romeIsoDate(value: Date): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE }).format(value);
-}
-
-/** Giorni di calendario trascorsi dalla data indicata (fuso di Roma). */
-export function daysSince(value: Date): number {
-  const diff = dateFromIso(todayIso()).getTime() - dateFromIso(romeIsoDate(value)).getTime();
-  return Math.max(0, Math.round(diff / DAY_MS));
-}
-
+/** Età di una richiesta in parole ("oggi", "ieri", "da 3 giorni"); i giorni si calcolano con daysSince di @/lib/format. */
 export function ageLabel(days: number): string {
   if (days === 0) return "oggi";
   if (days === 1) return "ieri";

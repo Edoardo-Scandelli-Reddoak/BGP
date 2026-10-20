@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import type { WarehouseCard } from "@/app/(app)/magazzino/queries";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { cn } from "@/components/ui/cn";
-import { formatDateTime, formatKg, formatM2, requestCode } from "@/lib/format";
-import { daysSince, destinationCity, waitingLabel } from "./format";
+import { daysSince, formatDateTime, formatKg, formatM2, requestCode } from "@/lib/format";
+import { destinationCity, waitingLabel } from "./format";
 
 function ageTone(days: number): BadgeTone {
   if (days >= 3) return "red";

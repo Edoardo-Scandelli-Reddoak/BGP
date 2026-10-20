@@ -17,8 +17,8 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
   return (
     <div className="space-y-6">
       {contact.needsReview ? (
-        <Alert tone="warning" title="Contatto creato dal modulo pubblico: verifica i dati in anagrafica">
-          Controlla nome, email, lingua e agente prima di inviare la richiesta al magazzino.
+        <Alert tone="warning" title="Contatto da verificare in anagrafica">
+          Il contatto arriva dal modulo pubblico o da un import con dati mancanti: controlla nome, email, lingua e agente (e le note della richiesta) prima di inviarla al magazzino.
           {contactHref ? (
             <>
               {" "}

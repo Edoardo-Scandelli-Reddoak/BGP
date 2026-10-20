@@ -20,11 +20,12 @@ import { fail, NOT_AUTHORIZED, zodFieldErrors, type ActionResult } from "@/lib/a
 import { hashPassword, passwordProblem } from "@/lib/auth/password";
 import { destroyUserSessions, getAuthorizedUser } from "@/lib/auth/session";
 import { sendMail, type OutgoingAttachment } from "@/lib/email/mailer";
-import { previewNotification } from "@/lib/email/notifications";
+import { previewNotification, SIGNATURE_CID, signatureImageAttachment } from "@/lib/email/notifications";
 import { invalidEmails, isValidEmail, parseEmailList } from "@/lib/email/recipients";
 import { TEMPLATE_LANGUAGES, textToHtml, type TemplateContent } from "@/lib/email/templates";
 import { formatDateTime } from "@/lib/format";
 import { getSettings, updateSettings } from "@/lib/settings";
+import { dbId, parseDbId } from "@/lib/validation";
 
 type State = ActionResult | null;
 
@@ -105,6 +106,7 @@ type UpdateOutcome =
 export async function updateUserAction(userId: number, _prev: State, fd: FormData): Promise<ActionResult> {
   const actor = await getAuthorizedUser("settings.manage");
   if (!actor) return NOT_AUTHORIZED;
+  if (parseDbId(userId) === null) return fail("Utente non valido.");
 
   const parsed = userFields
     .extend({ active: z.boolean() })
@@ -145,7 +147,14 @@ export async function updateUserAction(userId: number, _prev: State, fd: FormDat
       }
       await tx
         .update(users)
-        .set({ name: input.name, email: input.email, role: input.role, active: input.active })
+        .set({
+          name: input.name,
+          email: input.email,
+          role: input.role,
+          active: input.active,
+          // Riattivando un utente si azzera anche un eventuale blocco per troppi tentativi.
+          ...(!current.active && input.active ? { failedLoginCount: 0, failedLoginAt: null, lockedUntil: null } : {}),
+        })
         .where(eq(users.id, userId));
       return { kind: "ok", endSessions: current.role !== input.role || (current.active && !input.active) };
     });
@@ -169,6 +178,7 @@ export async function updateUserAction(userId: number, _prev: State, fd: FormDat
 export async function resetPasswordAction(userId: number, _prev: State, fd: FormData): Promise<ActionResult> {
   const actor = await getAuthorizedUser("settings.manage");
   if (!actor) return NOT_AUTHORIZED;
+  if (parseDbId(userId) === null) return fail("Utente non valido.");
 
   const password = str(fd, "password");
   const confirm = str(fd, "confirm");
@@ -178,7 +188,8 @@ export async function resetPasswordAction(userId: number, _prev: State, fd: Form
 
   const updated = await db
     .update(users)
-    .set({ passwordHash: await hashPassword(password) })
+    // La nuova password sblocca anche un account bloccato per troppi tentativi.
+    .set({ passwordHash: await hashPassword(password), failedLoginCount: 0, failedLoginAt: null, lockedUntil: null })
     .where(eq(users.id, userId))
     .returning({ id: users.id, name: users.name });
   if (updated.length === 0) return fail("Utente non trovato.");
@@ -262,16 +273,6 @@ export async function saveEmailSettingsAction(_prev: State, fd: FormData): Promi
   );
 }
 
-const SIGNATURE_CID = "firma-bgp";
-
-async function signatureImage(): Promise<OutgoingAttachment | null> {
-  try {
-    const content = await readFile(path.join(process.cwd(), "public", "email", "firma-bgp.png"));
-    return { filename: "firma-bgp.png", content, contentType: "image/png", cid: SIGNATURE_CID };
-  } catch {
-    return null;
-  }
-}
 
 export async function sendTestEmailAction(_prev: State, fd: FormData): Promise<ActionResult> {
   const actor = await getAuthorizedUser("settings.manage");
@@ -292,7 +293,7 @@ export async function sendTestEmailAction(_prev: State, fd: FormData): Promise<A
     "",
     settings.mailSignature,
   ].join("\n");
-  const image = settings.mailSignatureImage ? await signatureImage() : null;
+  const image = settings.mailSignatureImage ? await signatureImageAttachment() : null;
 
   const outcome = await sendMail({
     from: settings.mailFrom,
@@ -392,7 +393,7 @@ export async function previewTemplateAction(input: TemplatePreviewInput): Promis
   if (!key.success) return fail(key.error.issues[0]?.message ?? "Template non valido.");
   const content = templateContent.safeParse(input);
   if (!content.success) return fail(CHECK_FIELDS, zodFieldErrors(content.error.issues));
-  const requestId = z.coerce.number().int().positive().safeParse(input.requestId);
+  const requestId = dbId.safeParse(input.requestId);
   if (!requestId.success) return fail("Seleziona una richiesta per l'anteprima.");
 
   const rendered = await previewNotification(key.data.kind, requestId.data, key.data.language, content.data);
@@ -462,6 +463,7 @@ export async function createCarrierAction(_prev: State, fd: FormData): Promise<A
 export async function updateCarrierAction(carrierId: number, _prev: State, fd: FormData): Promise<ActionResult> {
   const actor = await getAuthorizedUser("settings.manage");
   if (!actor) return NOT_AUTHORIZED;
+  if (parseDbId(carrierId) === null) return fail("Corriere non valido.");
   const parsed = readCarrier(fd);
   if (!parsed.success) return fail(CHECK_FIELDS, zodFieldErrors(parsed.error.issues));
   if (await carrierNameTaken(parsed.data.name, carrierId)) return fail(CARRIER_TAKEN, { name: CARRIER_TAKEN });
@@ -478,6 +480,7 @@ export async function deleteCarrierAction(carrierId: number, _prev: State, _fd: 
   void _fd;
   const actor = await getAuthorizedUser("settings.manage");
   if (!actor) return NOT_AUTHORIZED;
+  if (parseDbId(carrierId) === null) return fail("Corriere non valido.");
   const [used] = await db.select({ n: count() }).from(sampleRequests).where(eq(sampleRequests.carrierId, carrierId));
   if (used.n > 0) {
     return fail(

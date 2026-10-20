@@ -7,7 +7,7 @@ import { and, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
 import { sessions, users, type Role } from "@/db/schema";
 import { can, ROLE_HOME, type Permission } from "@/lib/roles";
-import { SESSION_COOKIE, SESSION_RENEW_DAYS, SESSION_TTL_DAYS } from "./constants";
+import { SESSION_COOKIE, SESSION_RENEW_DAYS, SESSION_TTL_DAYS, sessionCookieOptions } from "./constants";
 
 export type SessionUser = {
   id: number;
@@ -28,13 +28,7 @@ export async function createSession(userId: number): Promise<void> {
   const expiresAt = new Date(Date.now() + SESSION_TTL_DAYS * DAY_MS);
   await db.insert(sessions).values({ id: hashToken(token), userId, expiresAt });
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, userId));
-  (await cookies()).set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    expires: expiresAt,
-  });
+  (await cookies()).set(SESSION_COOKIE, token, sessionCookieOptions());
 }
 
 /** Chiude la sessione corrente (logout). */
@@ -73,7 +67,7 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
   const row = rows[0];
   if (!row) return null;
 
-  // Rinnovo "scorrevole" della scadenza lato DB (il cookie viene rinnovato al prossimo login).
+  // Rinnovo "scorrevole" della scadenza lato DB (il cookie lo rinnova src/proxy.ts a ogni pagina).
   if (row.expiresAt.getTime() - Date.now() < SESSION_RENEW_DAYS * DAY_MS) {
     await db
       .update(sessions)

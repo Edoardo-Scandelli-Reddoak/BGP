@@ -21,7 +21,7 @@ export const EMAIL_KIND_DESCRIPTIONS: Record<EmailKind, string> = {
   CONFERMA_SPEDIZIONE:
     "Parte quando la richiesta è «Spedita» e la logistica ha inserito tracking e data di spedizione. Al contatto, con l'agente in copia, nella lingua del contatto.",
   AVVISO_BOLLA:
-    "Parte quando una richiesta con «bolla di consegna richiesta» diventa «Pronta per il ritiro». Destinatari: indirizzi della logistica nelle impostazioni.",
+    "Parte quando una richiesta con «bolla di consegna richiesta» diventa «Pronta per il ritiro», o quando la bolla viene richiesta su una richiesta già pronta. Destinatari: indirizzi della logistica nelle impostazioni.",
   TEST: "Email di prova inviata dalle impostazioni.",
 };
 
@@ -114,7 +114,7 @@ export const DEFAULT_TEMPLATES: Record<
         "Destinazione: {destinazione}",
         "Prodotti:",
         "{prodotti}",
-        "N° colli / Peso: {colli} colli — {peso_kg} kg",
+        "N° colli: {colli} — Peso: {peso_kg} kg",
         "m² totali: {mq_totali}",
         "",
         "Apri la richiesta per tutti i dettagli e per generare la bolla:",

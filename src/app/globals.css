@@ -38,3 +38,18 @@
     -moz-appearance: textfield;
   }
 }
+
+@layer components {
+  /*
+   * Menu laterale scorrevole: ombre in alto/in basso quando ci sono altre voci fuori vista
+   * (schermi bassi). Tecnica "scroll shadows": le coperture scorrono col contenuto, le ombre no.
+   */
+  .nav-scroll {
+    background:
+      linear-gradient(var(--color-brand-900) 30%, transparent) top / 100% 2.5rem no-repeat local,
+      linear-gradient(transparent, var(--color-brand-900) 70%) bottom / 100% 2.5rem no-repeat local,
+      radial-gradient(farthest-side at 50% 0, rgb(0 0 0 / 0.45), transparent) top / 100% 0.9rem no-repeat scroll,
+      radial-gradient(farthest-side at 50% 100%, rgb(0 0 0 / 0.45), transparent) bottom / 100% 0.9rem no-repeat scroll;
+    background-color: var(--color-brand-900);
+  }
+}

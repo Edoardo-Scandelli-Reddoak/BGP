@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ContactForm } from "@/components/anagrafiche/contact-form";
-import { COUNTRY_SUGGESTIONS, mergeSuggestions, safeReturnPath } from "@/components/anagrafiche/constants";
+import { COUNTRY_SUGGESTIONS, mergeSuggestions } from "@/components/anagrafiche/constants";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardBody } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { requireUser } from "@/lib/auth/session";
+import { safeReturnPath } from "@/lib/safe-path";
 import { listAgents, listCountries, param } from "../../_lib/queries";
 
 export const metadata: Metadata = { title: "Nuovo contatto" };

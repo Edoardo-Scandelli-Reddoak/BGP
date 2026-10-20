@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import { Children, cloneElement, Fragment, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { cn } from "./cn";
 
 const CONTROL =
@@ -36,6 +36,32 @@ export function Checkbox({ className, label, hint, ...props }: ComponentProps<"i
   );
 }
 
+/** Id del testo di suggerimento/errore di un Field (per controlli personalizzati che lo collegano da sé). */
+export function fieldDescriptionId(htmlFor: string): string {
+  return `${htmlFor}-desc`;
+}
+
+type DescribableProps = { id?: unknown; "aria-describedby"?: unknown };
+
+/**
+ * Collega il suggerimento/errore al controllo con id = htmlFor (aria-describedby), così il lettore
+ * di schermo lo legge quando il campo riceve il focus. Gli altri figli restano invariati.
+ * La struttura dei figli non cambia quando l'errore compare o sparisce (niente rimontaggio dei controlli).
+ */
+function describeControl(children: ReactNode, htmlFor: string, descId: string | undefined): ReactNode {
+  const describe = (child: ReactNode): ReactNode => {
+    if (!descId || !isValidElement<DescribableProps>(child) || child.type === Fragment || child.props.id !== htmlFor) {
+      return child;
+    }
+    const existing = typeof child.props["aria-describedby"] === "string" ? child.props["aria-describedby"] : "";
+    if (existing.split(/\s+/).includes(descId)) return child;
+    return cloneElement(child as ReactElement<DescribableProps>, {
+      "aria-describedby": existing ? `${existing} ${descId}` : descId,
+    });
+  };
+  return isValidElement(children) ? describe(children) : Children.map(children, describe);
+}
+
 /** Campo di form con etichetta, suggerimento ed errore. */
 export function Field({
   label,
@@ -54,19 +80,22 @@ export function Field({
   children: ReactNode;
   className?: string;
 }) {
+  const descId = htmlFor && (error || hint) ? fieldDescriptionId(htmlFor) : undefined;
   return (
     <div className={cn("space-y-1.5", className)}>
       <Label htmlFor={htmlFor}>
         {label}
         {required ? <span className="ml-0.5 text-red-600">*</span> : null}
       </Label>
-      {children}
+      {htmlFor ? describeControl(children, htmlFor, descId) : children}
       {error ? (
-        <p className="text-sm text-red-600" role="alert">
+        <p id={descId} className="text-sm text-red-600" role="alert">
           {error}
         </p>
       ) : hint ? (
-        <p className="text-xs text-slate-500">{hint}</p>
+        <p id={descId} className="text-xs text-slate-500">
+          {hint}
+        </p>
       ) : null}
     </div>
   );

@@ -64,6 +64,7 @@ export function LogisticsForm({
   values,
   deliveryFormRequired,
   autoConfirmation,
+  ddtUploaded,
   trackingHref,
 }: {
   requestId: number;
@@ -76,6 +77,8 @@ export function LogisticsForm({
   deliveryFormRequired: boolean;
   /** Salvando tracking e data di spedizione parte la conferma automatica (contatto con email, non ancora inviata). */
   autoConfirmation: boolean;
+  /** DDT già caricato: viene allegato alla conferma automatica. */
+  ddtUploaded: boolean;
   trackingHref: string | null;
 }) {
   const uid = useId();
@@ -87,9 +90,14 @@ export function LogisticsForm({
       if (mode !== "full" || !autoConfirmation) return null;
       const complete = String(fd.get("trackingNumber") ?? "").trim() !== "" && String(fd.get("shipmentDate") ?? "") !== "";
       const shipping = status === "SPEDITA" || fd.get("intent") === "ship";
-      return complete && shipping
-        ? "Con numero di tracking e data di spedizione parte subito l'email di conferma al cliente e la richiesta viene completata. Continuare?"
-        : null;
+      if (!complete || !shipping) return null;
+      // Il DDT caricato dopo l'invio non arriva al cliente: meglio saperlo prima.
+      const attachment = ddtUploaded
+        ? ""
+        : deliveryFormRequired
+          ? " Nessun DDT caricato: verrà allegata la bolla generata dal sistema."
+          : " Nessun DDT caricato: l'email partirà senza DDT.";
+      return `Con numero di tracking e data di spedizione parte subito l'email di conferma al cliente e la richiesta viene completata.${attachment} Continuare?`;
     },
   });
 
@@ -182,6 +190,14 @@ export function LogisticsForm({
           </>
         ) : (
           <Section title="Dati amministrativi">
+            <Field
+              label="Data di spedizione"
+              htmlFor={id("shipment")}
+              error={fieldErrors.shipmentDate}
+              hint="Data in cui i campioni sono partiti: decide il mese del report m²."
+            >
+              <DateInput id={id("shipment")} name="shipmentDate" defaultValue={values.shipmentDate} invalid={Boolean(fieldErrors.shipmentDate)} />
+            </Field>
             {ddtField}
             {costField}
             {notesField}

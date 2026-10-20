@@ -54,6 +54,10 @@ export const ADVANCE_LABELS: Partial<Record<RequestStatus, string>> = {
   PRONTA_RITIRO: "Segna come spedita",
 };
 
+/**
+ * Bolla a posto: non richiesta, oppure «bolla pronta», numero DDT o DDT caricato.
+ * La stessa regola è in SQL nel conteggio delle bolle da preparare (countByStatus in service.ts).
+ */
 export function bollaSatisfied(s: Pick<WorkflowSnapshot, "deliveryFormRequired" | "deliveryFormReady" | "ddtNumber" | "hasDdtAttachment">): boolean {
   if (!s.deliveryFormRequired) return true;
   return s.deliveryFormReady || Boolean(s.ddtNumber?.trim()) || s.hasDdtAttachment;
@@ -104,6 +108,8 @@ export function transitionProblems(
 /**
  * Automazione 2 del blueprint: "Tracking number is not empty AND Status = Shipped"
  * → email al cliente con l'agente in CC, poi la richiesta passa a Completata.
+ * Una sola volta: una richiesta riaperta dopo l'invio conserva notificationSentAt e non la ripete
+ * (il reinvio è esplicito, con «Invia conferma»).
  */
 export function shouldSendShipmentConfirmation(s: WorkflowSnapshot): boolean {
   return (

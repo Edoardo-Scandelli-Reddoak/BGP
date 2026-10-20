@@ -11,11 +11,16 @@ import {
   type RawRow,
 } from "./parse";
 
+export type ImportRowMessage = { row: number; reason: string };
+
 export type ImportSummary = {
   created: number;
   updated: number;
   unchanged: number;
-  skipped: { row: number; reason: string }[];
+  /** Righe non importate. */
+  skipped: ImportRowMessage[];
+  /** Righe importate con un valore da verificare (es. lingua mancante impostata a italiano). */
+  warnings: ImportRowMessage[];
   agentsCreated?: number;
   agentsUpdated?: number;
 };
@@ -28,11 +33,14 @@ function chunks<T>(arr: T[], size = CHUNK): T[][] {
   return out;
 }
 
-/** Lingua dell'agente: la più frequente tra i suoi clienti (gli agenti esteri scrivono in inglese/francese/tedesco). */
+/**
+ * Lingua dell'agente: la più frequente tra i suoi clienti (gli agenti esteri scrivono in inglese/francese/tedesco).
+ * I clienti senza lingua non votano: un agente senza voti non compare nella mappa.
+ */
 function agentLanguages(customers: ParsedCustomer[]): Map<string, Language> {
   const votes = new Map<string, Map<Language, number>>();
   for (const c of customers) {
-    if (!c.agentKey) continue;
+    if (!c.agentKey || !c.language) continue;
     const m = votes.get(c.agentKey) ?? new Map<Language, number>();
     m.set(c.language, (m.get(c.language) ?? 0) + 1);
     votes.set(c.agentKey, m);
@@ -42,11 +50,19 @@ function agentLanguages(customers: ParsedCustomer[]): Map<string, Language> {
   return out;
 }
 
+/** Messaggio per una lingua mancante o non riconosciuta nel file. */
+function languageProblem(c: ParsedCustomer): string {
+  return c.languageRaw ? `lingua «${c.languageRaw}» non riconosciuta` : "lingua mancante";
+}
+
 /**
  * Importa/aggiorna i contatti dal file Airtable di BGP.
  * - Gli agenti (colonne Agent name / Agent email) diventano contatti di tipo AGENTE.
  * - I clienti sono riconosciuti tra un import e l'altro per nome + indirizzo:
  *   se esistono vengono aggiornati (email, agente, lingua, paese), altrimenti creati.
+ * - Lingua mancante (obbligatoria per BGP): un contatto nuovo viene creato in italiano e segnato
+ *   «da verificare», uno esistente mantiene la sua lingua; in entrambi i casi un avviso nel riepilogo.
+ * - Il paese ricavato dall'indirizzo non sostituisce mai quello già salvato (una colonna Paese sì).
  * - I contatti già presenti e assenti dal file non vengono toccati.
  */
 export async function importContacts(rows: RawRow[]): Promise<ImportSummary> {
@@ -72,6 +88,7 @@ export async function importContacts(rows: RawRow[]): Promise<ImportSummary> {
     const agentIdByKey = new Map<string, number>();
     for (const c of existing.filter((c) => c.type === "AGENTE")) agentIdByKey.set(agentKey(c.name, c.email), c.id);
 
+    const warnings: ImportSummary["warnings"] = [];
     let agentsCreated = 0;
     let agentsUpdated = 0;
     for (const a of agents) {
@@ -83,12 +100,19 @@ export async function importContacts(rows: RawRow[]): Promise<ImportSummary> {
           agentsUpdated++;
         }
       } else {
+        const language = langs.get(a.key);
         const [row] = await tx
           .insert(contacts)
-          .values({ type: "AGENTE", name: a.name, email: a.email, language: langs.get(a.key) ?? "it" })
+          .values({ type: "AGENTE", name: a.name, email: a.email, language: language ?? "it", needsReview: !language })
           .returning({ id: contacts.id });
         agentIdByKey.set(a.key, row.id);
         agentsCreated++;
+        if (!language) {
+          warnings.push({
+            row: a.row,
+            reason: `Agente ${a.name}: nessun cliente con la lingua indicata, impostato italiano — da verificare`,
+          });
+        }
       }
     }
 
@@ -108,16 +132,23 @@ export async function importContacts(rows: RawRow[]): Promise<ImportSummary> {
           email: c.email,
           defaultAddress: c.defaultAddress,
           country: c.country,
-          language: c.language,
+          language: c.language ?? "it",
+          needsReview: c.language === null,
           phone: c.phone,
           agentId,
         });
+        if (!c.language) {
+          warnings.push({ row: c.row, reason: `${c.name}: ${languageProblem(c)}, impostato italiano — da verificare` });
+        }
         continue;
       }
+      // Lingua mancante nel file per un contatto già presente: si tiene quella in anagrafica,
+      // senza avvisi (altrimenti ricomparirebbero a ogni import anche dopo la correzione).
       const patch = {
         email: c.email ?? cur.email,
-        country: c.country ?? cur.country,
-        language: c.language,
+        // il paese ricavato dall'indirizzo completa solo un paese mancante
+        country: c.countryDerived ? (cur.country ?? c.country) : (c.country ?? cur.country),
+        language: c.language ?? cur.language,
         agentId,
         phone: c.phone ?? cur.phone,
       };
@@ -139,6 +170,7 @@ export async function importContacts(rows: RawRow[]): Promise<ImportSummary> {
       updated,
       unchanged,
       skipped: customers.skipped,
+      warnings: warnings.sort((a, b) => a.row - b.row),
       agentsCreated,
       agentsUpdated,
     };
@@ -146,31 +178,47 @@ export async function importContacts(rows: RawRow[]): Promise<ImportSummary> {
 }
 
 /**
- * Importa/aggiorna il catalogo prodotti (codice + descrizione).
+ * Importa/aggiorna il catalogo prodotti (codice + descrizione, facoltativi marchio e categoria).
  * I prodotti esistenti vengono riconosciuti dal codice (senza distinzione maiuscole) e riattivati.
+ * Le celle vuote non cancellano descrizione, marchio o categoria già salvati.
  */
 export async function importProducts(rows: RawRow[]): Promise<ImportSummary> {
   const parsed = parseProductRows(rows);
   return db.transaction(async (tx) => {
     const existing = await tx
-      .select({ id: products.id, code: products.code, description: products.description, active: products.active })
+      .select({
+        id: products.id,
+        code: products.code,
+        description: products.description,
+        brand: products.brand,
+        category: products.category,
+        active: products.active,
+      })
       .from(products);
     const byCode = new Map(existing.map((p) => [p.code.toUpperCase(), p]));
 
+    type ProductPatch = Partial<Pick<typeof products.$inferInsert, "description" | "brand" | "category">>;
     const toInsert: (typeof products.$inferInsert)[] = [];
-    const toUpdate: { id: number; description: string }[] = [];
+    const toUpdate: { id: number; patch: ProductPatch }[] = [];
     const toReactivate: number[] = [];
     let unchanged = 0;
     for (const p of parsed.rows) {
       const cur = byCode.get(p.code.toUpperCase());
-      if (!cur) toInsert.push({ code: p.code, description: p.description, active: true });
-      else if (cur.description !== p.description && p.description) toUpdate.push({ id: cur.id, description: p.description });
+      if (!cur) {
+        toInsert.push({ code: p.code, description: p.description, brand: p.brand, category: p.category, active: true });
+        continue;
+      }
+      const patch: ProductPatch = {};
+      if (p.description && cur.description !== p.description) patch.description = p.description;
+      if (p.brand && cur.brand !== p.brand) patch.brand = p.brand;
+      if (p.category && cur.category !== p.category) patch.category = p.category;
+      if (Object.keys(patch).length) toUpdate.push({ id: cur.id, patch });
       else if (!cur.active) toReactivate.push(cur.id);
       else unchanged++;
     }
     for (const part of chunks(toInsert)) await tx.insert(products).values(part);
     for (const u of toUpdate) {
-      await tx.update(products).set({ description: u.description, active: true }).where(eq(products.id, u.id));
+      await tx.update(products).set({ ...u.patch, active: true }).where(eq(products.id, u.id));
     }
     for (const part of chunks(toReactivate)) {
       await tx.update(products).set({ active: true }).where(inArray(products.id, part));
@@ -180,6 +228,7 @@ export async function importProducts(rows: RawRow[]): Promise<ImportSummary> {
       updated: toUpdate.length + toReactivate.length,
       unchanged,
       skipped: parsed.skipped,
+      warnings: [],
     };
   });
 }

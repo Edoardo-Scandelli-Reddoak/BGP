@@ -12,21 +12,45 @@ import { cn } from "@/components/ui/cn";
 import { Field, Textarea } from "@/components/ui/form";
 import { SubmitButton } from "@/components/ui/submit-button";
 import type { ActionResult } from "@/lib/action-result";
+import { useRequestEditing } from "./request-editing";
 
 type State = ActionResult | null;
 
-/** «Invia al magazzino»: disabilitato finché mancano dati (i motivi sono elencati sopra il pulsante). */
-export function SendToWarehouseForm({ requestId, blocked }: { requestId: number; blocked: boolean }) {
+/**
+ * «Invia al magazzino»: disabilitato finché mancano dati (i motivi sono elencati sopra il pulsante)
+ * e mentre il pannello Richiesta è in modifica, perché partirebbero i dati non ancora salvati.
+ */
+export function SendToWarehouseForm({
+  requestId,
+  blocked,
+  confirmMessage,
+}: {
+  requestId: number;
+  blocked: boolean;
+  /** Conferma prima dell'invio (es. contatto ancora da verificare). */
+  confirmMessage?: string;
+}) {
+  const { editing } = useRequestEditing();
+  const hintId = useId();
   const [state, action] = useActionState<State, FormData>(sendToWarehouseAction.bind(null, requestId), null);
   return (
     <form action={action} className="space-y-2">
-      <SubmitButton size="lg" className="w-full sm:w-auto" disabled={blocked} pendingText="Invio in corso…">
+      <SubmitButton
+        size="lg"
+        className="w-full sm:w-auto"
+        disabled={blocked || editing}
+        aria-describedby={hintId}
+        confirmMessage={confirmMessage}
+        pendingText="Invio in corso…"
+      >
         Invia al magazzino
       </SubmitButton>
-      <p className="text-xs text-slate-500">
-        {blocked
-          ? "Completa prima i dati indicati sopra."
-          : "La richiesta passa a «In preparazione» e parte l'email di avviso al magazzino."}
+      <p id={hintId} className={cn("text-xs", editing ? "font-medium text-amber-800" : "text-slate-500")}>
+        {editing
+          ? "Salva o annulla le modifiche alla richiesta prima di inviarla al magazzino."
+          : blocked
+            ? "Completa prima i dati indicati sopra."
+            : "La richiesta passa a «In preparazione» e parte l'email di avviso al magazzino."}
       </p>
       <ActionMessage state={state} />
     </form>

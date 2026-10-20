@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, count, eq, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
-import { contacts, products, requestItems, sampleRequests, type RequestStatus } from "@/db/schema";
+import { attachments, contacts, products, requestItems, sampleRequests, type RequestStatus } from "@/db/schema";
 import { parseRequestCode } from "@/lib/format";
 import { likePattern } from "@/lib/search";
 import { OPEN_STATUSES } from "@/lib/status";
@@ -24,6 +24,9 @@ export type OpenListRow = {
   destinationAddress: string;
   deliveryFormRequired: boolean;
   deliveryFormReady: boolean;
+  ddtNumber: string | null;
+  /** C'è un DDT caricato (conta come bolla pronta, stessa regola della logistica). */
+  hasDdt: boolean;
   contactId: number;
   contactName: string;
   contactNeedsReview: boolean;
@@ -33,6 +36,8 @@ export type OpenListRow = {
 };
 
 const agents = alias(contacts, "agents");
+
+const hasDdtSql = sql<boolean>`exists (select 1 from ${attachments} where ${attachments.requestId} = ${sampleRequests.id} and ${attachments.kind} = 'DDT')`;
 
 /** Condizioni comuni (tutte le aperte + ricerca + origine), senza il filtro di stato. */
 function baseConditions(f: OpenListFilters): SQL[] {
@@ -82,6 +87,8 @@ export async function getOpenRequests(f: OpenListFilters) {
       destinationAddress: sampleRequests.destinationAddress,
       deliveryFormRequired: sampleRequests.deliveryFormRequired,
       deliveryFormReady: sampleRequests.deliveryFormReady,
+      ddtNumber: sampleRequests.ddtNumber,
+      hasDdt: hasDdtSql,
       contactId: contacts.id,
       contactName: contacts.name,
       contactNeedsReview: contacts.needsReview,

@@ -14,15 +14,12 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { getAuthorizedUser, requireUser } from "@/lib/auth/session";
 import { formatDate, formatDateTime, formatKg, formatM2, formatNumber, requestCode } from "@/lib/format";
 import { can } from "@/lib/roles";
+import { parseDbId } from "@/lib/validation";
 import { deleteProduct } from "../../actions";
 import { getProductDetail, listProductFacets, param, type ProductDetail } from "../../_lib/queries";
 
-function parseIdParam(value: string): number | null {
-  return /^\d{1,9}$/.test(value) ? Number(value) : null;
-}
-
 export async function generateMetadata({ params }: PageProps<"/anagrafiche/prodotti/[id]">): Promise<Metadata> {
-  const id = parseIdParam((await params).id);
+  const id = parseDbId((await params).id);
   const user = await getAuthorizedUser("registry.view");
   const data = id && user ? await getProductDetail(id) : null;
   return { title: data ? `Prodotto ${data.product.code}` : "Prodotto" };
@@ -30,7 +27,7 @@ export async function generateMetadata({ params }: PageProps<"/anagrafiche/prodo
 
 export default async function ProductDetailPage({ params, searchParams }: PageProps<"/anagrafiche/prodotti/[id]">) {
   const user = await requireUser("registry.view");
-  const id = parseIdParam((await params).id);
+  const id = parseDbId((await params).id);
   if (!id) notFound();
   const data = await getProductDetail(id);
   if (!data) notFound();

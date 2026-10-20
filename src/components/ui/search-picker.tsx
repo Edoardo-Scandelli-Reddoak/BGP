@@ -19,6 +19,7 @@ export function SearchPicker<T>({
   invalid,
   id,
   extraParams,
+  "aria-describedby": describedBy,
 }: {
   endpoint: string;
   placeholder?: string;
@@ -30,6 +31,8 @@ export function SearchPicker<T>({
   invalid?: boolean;
   id?: string;
   extraParams?: Record<string, string>;
+  /** Collegato da Field (suggerimento/errore del campo). */
+  "aria-describedby"?: string;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<T[]>([]);
@@ -37,6 +40,9 @@ export function SearchPicker<T>({
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(0);
   const listId = useId();
+  const optionId = (i: number) => `${listId}-opt-${i}`;
+  // Opzione evidenziata con le frecce: annunciata dal lettore di schermo senza spostare il focus dall'input.
+  const activeDescendant = open && results.length > 0 ? optionId(Math.min(active, results.length - 1)) : undefined;
   const boxRef = useRef<HTMLDivElement>(null);
   const extra = JSON.stringify(extraParams ?? {});
 
@@ -90,6 +96,9 @@ export function SearchPicker<T>({
         aria-expanded={open}
         aria-controls={listId}
         aria-autocomplete="list"
+        aria-activedescendant={activeDescendant}
+        aria-describedby={describedBy}
+        aria-busy={loading || undefined}
         aria-invalid={invalid || undefined}
         autoComplete="off"
         autoFocus={autoFocus}
@@ -121,8 +130,21 @@ export function SearchPicker<T>({
         className="block h-10 w-full rounded-lg border-0 bg-white px-3 text-base sm:text-sm shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-brand-600 aria-[invalid=true]:ring-red-500"
       />
       {loading ? (
-        <span className="pointer-events-none absolute right-3 top-3 size-4 animate-spin rounded-full border-2 border-slate-400 border-r-transparent" />
+        <span
+          aria-hidden
+          className="pointer-events-none absolute right-3 top-3 size-4 animate-spin rounded-full border-2 border-slate-400 border-r-transparent"
+        />
       ) : null}
+      {/* Stato della ricerca per i lettori di schermo (il contenitore è relative: lo sr-only non allarga la pagina). */}
+      <span role="status" className="sr-only">
+        {loading
+          ? "Ricerca in corso…"
+          : open
+            ? results.length === 0
+              ? "Nessun risultato"
+              : `${results.length} risultat${results.length === 1 ? "o" : "i"}: usa le frecce per scegliere`
+            : ""}
+      </span>
       {open ? (
         <ul
           id={listId}
@@ -135,6 +157,7 @@ export function SearchPicker<T>({
             results.map((item, i) => (
               <li
                 key={getKey(item)}
+                id={optionId(i)}
                 role="option"
                 aria-selected={i === active}
                 onMouseDown={(e) => {

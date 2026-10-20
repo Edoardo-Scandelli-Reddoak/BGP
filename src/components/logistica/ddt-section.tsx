@@ -19,7 +19,21 @@ export type DdtFileInfo = {
 };
 
 /** Upload, download e rimozione del DDT firmato o scansionato (PDF, JPG o PNG). */
-export function DdtSection({ requestId, ddt, editable }: { requestId: number; ddt: DdtFileInfo | null; editable: boolean }) {
+export function DdtSection({
+  requestId,
+  ddt,
+  editable,
+  confirmationSent,
+  completed,
+}: {
+  requestId: number;
+  ddt: DdtFileInfo | null;
+  editable: boolean;
+  /** Conferma di spedizione già inviata: un DDT caricato ora arriva al cliente solo con un nuovo invio. */
+  confirmationSent: boolean;
+  /** Richiesta completata (con o senza conferma email). */
+  completed: boolean;
+}) {
   const inputId = useId();
   const [localError, setLocalError] = useState<string | null>(null);
   const upload = useActionForm(uploadDdtFile.bind(null, requestId));
@@ -95,7 +109,17 @@ export function DdtSection({ requestId, ddt, editable }: { requestId: number; dd
             </ActionButton>
           </div>
           <p id={`${inputId}-hint`} className="text-xs text-slate-500">
-            PDF, JPG o PNG fino a 10 MB. Il DDT caricato viene allegato alla conferma di spedizione al cliente.
+            PDF, JPG o PNG fino a 10 MB.{" "}
+            {confirmationSent ? (
+              <span className="font-medium text-amber-800">
+                La conferma di spedizione è già stata inviata: il DDT caricato ora arriva al cliente solo se invii di
+                nuovo la conferma (sezione «Conferma di spedizione al cliente»).
+              </span>
+            ) : completed ? (
+              "La richiesta è stata completata senza conferma email: il DDT resta archiviato nella richiesta."
+            ) : (
+              "Il DDT caricato viene allegato alla conferma di spedizione al cliente."
+            )}
           </p>
           {localError ? (
             <p className="text-sm text-red-600" role="alert">

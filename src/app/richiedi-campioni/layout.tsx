@@ -4,7 +4,7 @@ import { BrandMark } from "@/components/layout/brand";
 /** Layout pubblico (senza login) del modulo di richiesta campioni per agenti e clienti. */
 export default function PublicRequestLayout({ children }: LayoutProps<"/richiedi-campioni">) {
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50">
+    <div className="flex min-h-dvh flex-col bg-slate-50">
       <header className="bg-brand-900">
         <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-4 sm:px-6">
           <BrandMark inverted />

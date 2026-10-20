@@ -1,10 +1,11 @@
 import "server-only";
-import { and, asc, count, desc, eq, ilike, isNull, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import { carriers, contacts, sampleRequests } from "@/db/schema";
 import { likePattern } from "@/lib/search";
-import { receivedBetween, romeDayStart } from "./conditions";
+import { SHIPPED_STATUSES } from "@/lib/status";
+import { effectiveShipmentDate, receivedBetween, romeDayStart } from "./conditions";
 import { NONE_VALUE, type HistoryFilters } from "./history-filters";
 import { addDays } from "./period";
 
@@ -71,6 +72,9 @@ const productCodes = sql<string | null>`(
 const totalM2 = sql<number>`(
   select coalesce(sum(pc.area_m2), 0)::float8 from pieces pc where pc.request_id = ${sampleRequests.id})`.mapWith(Number);
 
+/** «Spedita il»: data di spedizione effettiva (o di ritiro, se manca) delle sole richieste partite. */
+const shippedOn = sql<string | null>`(case when ${inArray(sampleRequests.status, SHIPPED_STATUSES)} then ${effectiveShipmentDate} end)`;
+
 const historyColumns = {
   id: sampleRequests.id,
   receivedAt: sampleRequests.receivedAt,
@@ -89,6 +93,7 @@ const historyColumns = {
   pickupDate: sampleRequests.pickupDate,
   trackingNumber: sampleRequests.trackingNumber,
   shipmentDate: sampleRequests.shipmentDate,
+  shippedOn,
   shippingCost: sampleRequests.shippingCost,
 };
 

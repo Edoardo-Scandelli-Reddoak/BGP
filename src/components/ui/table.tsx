@@ -1,10 +1,13 @@
 import type { ComponentProps } from "react";
 import { cn } from "./cn";
 
-/** Tabella responsive: su schermi stretti scorre orizzontalmente dentro la card. */
+/**
+ * Tabella responsive: su schermi stretti scorre orizzontalmente dentro la card.
+ * `relative` serve agli elementi sr-only (position: absolute): senza, sfuggono allo scorrimento e allargano la pagina.
+ */
 export function Table({ className, ...props }: ComponentProps<"table">) {
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className={cn("min-w-full divide-y divide-slate-200 text-sm", className)} {...props} />
     </div>
   );

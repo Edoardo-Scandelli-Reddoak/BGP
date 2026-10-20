@@ -4,8 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { fail, NOT_AUTHORIZED, type ActionResult } from "@/lib/action-result";
 import { getAuthorizedUser, type SessionUser } from "@/lib/auth/session";
-import { formatCm } from "@/components/magazzino/format";
-import { formatM2, parseDecimal, pieceAreaM2 } from "@/lib/format";
+import { formatCm, formatM2, parseDecimal, pieceAreaM2 } from "@/lib/format";
 import {
   addPiece as addPieceService,
   advanceStatus,

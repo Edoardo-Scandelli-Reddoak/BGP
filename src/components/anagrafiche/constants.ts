@@ -53,12 +53,3 @@ export function mergeSuggestions(base: string[], extra: (string | null)[]): stri
   }
   return out;
 }
-
-/** Solo percorsi interni ("/richieste/nuova"), mai URL esterni o "//host". */
-export function safeReturnPath(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const s = value.trim();
-  if (!s.startsWith("/") || s.startsWith("//") || s.startsWith("/\\")) return null;
-  if (s.length > 300 || /[\s\\]/.test(s)) return null;
-  return s;
-}

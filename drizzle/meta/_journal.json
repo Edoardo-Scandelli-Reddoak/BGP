@@ -15,6 +15,13 @@
       "when": 1792484262472,
       "tag": "0001_delivery_form_ready",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792488685560,
+      "tag": "0002_login_lockout",
+      "breakpoints": true
     }
   ]
 }

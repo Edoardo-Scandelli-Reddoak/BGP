@@ -1,6 +1,6 @@
 import { formatDate, requestCode } from "@/lib/format";
 import { STATUS_LABELS } from "@/lib/status";
-import { csvDecimal, toCsv } from "./csv";
+import { csvDecimal, csvText, toCsv } from "./csv";
 import { SOURCE_LABELS } from "./history-filters";
 import type { HistoryRow } from "./history";
 import type { M2ProductRow } from "./m2";
@@ -9,7 +9,7 @@ import type { M2ProductRow } from "./m2";
 export function m2ReportCsv(rows: M2ProductRow[]): string {
   return toCsv(
     ["Codice", "Descrizione", "Marchio", "Richieste", "Pezzi", "m2"],
-    rows.map((r) => [r.code, r.description, r.brand ?? "", r.requests, r.pieces, csvDecimal(r.m2, 2)]),
+    rows.map((r) => [csvText(r.code), r.description, r.brand ?? "", r.requests, r.pieces, csvDecimal(r.m2, 2)]),
   );
 }
 
@@ -46,14 +46,14 @@ export function historyCsv(rows: HistoryRow[]): string {
       r.contactName,
       r.agentName ?? "",
       r.country ?? "",
-      r.productCodes ?? "",
+      csvText(r.productCodes),
       r.packagesCount,
       csvDecimal(r.weightKg, 2),
       csvDecimal(r.m2, 2),
       r.carrierName ?? "",
       formatDate(r.pickupDate),
       r.trackingNumber ?? "",
-      formatDate(r.shipmentDate),
+      formatDate(r.shippedOn),
       csvDecimal(r.shippingCost, 2),
     ]),
   );

@@ -83,6 +83,10 @@ export const users = pgTable(
     role: roleEnum("role").notNull(),
     active: boolean("active").notNull().default(true),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    /** Limite tentativi di accesso: errori nella finestra corrente, inizio finestra, blocco temporaneo. */
+    failedLoginCount: integer("failed_login_count").notNull().default(0),
+    failedLoginAt: timestamp("failed_login_at", { withTimezone: true }),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
     ...timestamps,
   },
   (t) => [uniqueIndex("users_email_unique").on(sql`lower(${t.email})`)],

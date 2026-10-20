@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { formatEmailList, invalidEmails, parseEmailList } from "@/lib/email/recipients";
 import { parseDecimal } from "@/lib/format";
+import { parseDbId } from "@/lib/validation";
 
 /** Testo opzionale: stringa vuota → null. */
 const optionalText = (max: number) =>
@@ -10,10 +11,16 @@ const optionalText = (max: number) =>
     .max(max, `Massimo ${max} caratteri`)
     .transform((v) => (v ? v : null));
 
-const idOrNull = z.preprocess(
-  (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
-  z.number({ error: "Valore non valido" }).int("Valore non valido").positive("Valore non valido").nullable(),
-);
+/** Id facoltativo dal form: vuoto → null; non numerico o fuori dai limiti di Postgres → errore. */
+const idOrNull = z.unknown().transform((v, ctx) => {
+  if (v === "" || v === null || v === undefined) return null;
+  const id = parseDbId(v);
+  if (id === null) {
+    ctx.addIssue({ code: "custom", message: "Valore non valido" });
+    return z.NEVER;
+  }
+  return id;
+});
 
 export const contactInput = z.object({
   id: idOrNull,

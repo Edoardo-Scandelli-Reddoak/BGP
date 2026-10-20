@@ -20,7 +20,10 @@ import { parseEmailList } from "@/lib/email/recipients";
 import { TIME_ZONE, todayIso } from "@/lib/format";
 import { can } from "@/lib/roles";
 import { nextStatus, previousStatus, STATUS_LABELS } from "@/lib/status";
+import { dbId } from "@/lib/validation";
+import { mergeItems, optionalText } from "./input";
 import {
+  bollaSatisfied,
   EDITABLE_IN,
   shouldSendShipmentConfirmation,
   transitionPermission,
@@ -45,13 +48,18 @@ const NOT_FOUND = "Richiesta non trovata.";
 /* Schemi di input (riusabili dalle server action)                     */
 /* ------------------------------------------------------------------ */
 
-const optionalText = (max: number) =>
+/**
+ * Id obbligatorio (contatto, prodotto): se manca o non è un numero il messaggio è quello indicato;
+ * il controllo dei limiti di Postgres resta quello comune di `dbId`.
+ */
+const requiredId = (message: string) =>
   z
-    .string()
-    .trim()
-    .max(max, `Massimo ${max} caratteri`)
-    .nullish()
-    .transform((v) => (v ? v : null));
+    .unknown()
+    .refine((v) => {
+      const n = typeof v === "string" ? (v.trim() === "" ? NaN : Number(v)) : Number(v);
+      return Number.isInteger(n) && n > 0;
+    }, message)
+    .pipe(dbId);
 
 /** Data 'YYYY-MM-DD'; un <input type="date"> vuoto invia "" e diventa null. */
 const isoDate = z.preprocess(
@@ -64,13 +72,13 @@ const isoDate = z.preprocess(
 );
 
 export const requestItemInput = z.object({
-  productId: z.coerce.number().int().positive("Prodotto non valido"),
+  productId: requiredId("Prodotto non valido"),
   quantity: z.coerce.number().int("Quantità non valida").min(1, "Quantità minima 1").max(9999, "Quantità troppo alta"),
   notes: optionalText(500),
 });
 
 export const requestInfoInput = z.object({
-  contactId: z.coerce.number().int().positive("Seleziona il contatto"),
+  contactId: requiredId("Seleziona il contatto"),
   destinationAddress: z.string().trim().min(1, "Indica l'indirizzo di destinazione").max(2000),
   notes: optionalText(5000),
   deliveryFormRequired: z.boolean(),
@@ -91,7 +99,7 @@ export const warehouseInput = z.object({
 export type WarehouseInput = z.input<typeof warehouseInput>;
 
 export const pieceInput = z.object({
-  productId: z.coerce.number().int().positive("Seleziona il prodotto"),
+  productId: requiredId("Seleziona il prodotto"),
   lengthCm: z.coerce.number().gt(0, "La lunghezza deve essere maggiore di 0").max(10000, "Lunghezza troppo alta"),
   widthCm: z.coerce.number().gt(0, "La larghezza deve essere maggiore di 0").max(10000, "Larghezza troppo alta"),
   quantity: z.coerce.number().int().min(1, "Quantità minima 1").max(999).default(1),
@@ -100,7 +108,7 @@ export const pieceInput = z.object({
 export type PieceInput = z.input<typeof pieceInput>;
 
 export const logisticsInput = z.object({
-  carrierId: z.coerce.number().int().positive().nullish(),
+  carrierId: dbId.nullish(),
   pickupDate: isoDate,
   trackingNumber: optionalText(100),
   shipmentDate: isoDate,
@@ -187,19 +195,12 @@ async function validateProducts(productIds: number[], allowInactiveIds: number[]
   return null;
 }
 
-/** Unisce righe con lo stesso prodotto sommando le quantità. */
-function mergeItems(items: z.output<typeof requestItemInput>[]) {
-  const map = new Map<number, z.output<typeof requestItemInput>>();
-  for (const item of items) {
-    const prev = map.get(item.productId);
-    if (prev) {
-      prev.quantity += item.quantity;
-      if (item.notes) prev.notes = prev.notes ? `${prev.notes}; ${item.notes}` : item.notes;
-    } else {
-      map.set(item.productId, { ...item });
-    }
-  }
-  return [...map.values()];
+async function hasDdtAttachment(id: number): Promise<boolean> {
+  const [ddt] = await db
+    .select({ n: count() })
+    .from(attachments)
+    .where(and(eq(attachments.requestId, id), eq(attachments.kind, "DDT")));
+  return ddt.n > 0;
 }
 
 function receivedAtFrom(iso: string | null): Date | undefined {
@@ -313,8 +314,8 @@ export async function updateRequestInfo(actor: Actor, id: number, rawInput: Requ
     }
   }
 
-  await db.transaction(async (tx) => {
-    await tx
+  const saved = await db.transaction(async (tx) => {
+    const rows = await tx
       .update(sampleRequests)
       .set({
         contactId: input.contactId,
@@ -323,12 +324,34 @@ export async function updateRequestInfo(actor: Actor, id: number, rawInput: Requ
         deliveryFormRequired: input.deliveryFormRequired,
         ...(input.receivedAt ? { receivedAt: receivedAtFrom(input.receivedAt) } : {}),
       })
-      .where(eq(sampleRequests.id, id));
+      .where(and(eq(sampleRequests.id, id), eq(sampleRequests.status, current.status)))
+      .returning({ id: sampleRequests.id });
+    if (rows.length === 0) return false;
     if (itemsChanged) {
       await tx.delete(requestItems).where(eq(requestItems.requestId, id));
       await tx.insert(requestItems).values(items.map((i) => ({ ...i, requestId: id })));
     }
+    return true;
   });
+  if (!saved) return fail("La richiesta è stata modificata da un altro utente: ricarica la pagina.");
+
+  // Automazione 3 ("bolla richiesta" E "Pronta per il ritiro"): scatta anche quando la bolla viene
+  // richiesta su una richiesta già pronta, se la logistica non l'ha ancora preparata.
+  if (current.status === "PRONTA_RITIRO" && !current.deliveryFormRequired && input.deliveryFormRequired) {
+    const bollaReady = bollaSatisfied({
+      deliveryFormRequired: true,
+      deliveryFormReady: current.deliveryFormReady,
+      ddtNumber: current.ddtNumber,
+      hasDdtAttachment: await hasDdtAttachment(id),
+    });
+    if (!bollaReady) {
+      const n = await sendRequestNotification("AVVISO_BOLLA", id, actor.id);
+      return {
+        ok: true,
+        message: `Dati della richiesta aggiornati. ${notificationMessage(n, "Avviso bolla inviato alla logistica") ?? ""}`.trim(),
+      };
+    }
+  }
   return { ok: true, message: "Dati della richiesta aggiornati." };
 }
 
@@ -461,10 +484,23 @@ export async function updateLogisticsData(actor: Actor, id: number, rawInput: Lo
     if (Object.keys(fieldErrors).length) return fail("Corriere e data di ritiro sono obbligatori per una richiesta spedita.", fieldErrors);
   }
   if (current.status === "COMPLETATA") {
-    // Dopo la chiusura restano modificabili solo i dati "amministrativi" (il costo arriva spesso dopo).
+    // Dopo la chiusura restano modificabili solo i dati "amministrativi" (il costo arriva spesso dopo)
+    // e la data di spedizione, per correggere o completare il mese in cui contano i m².
+    // Senza data nel form resta quella salvata: non si può svuotare.
+    const shipmentDate = input.shipmentDate ?? current.shipmentDate;
+    if (shipmentDate && current.pickupDate && shipmentDate < current.pickupDate) {
+      return fail("La data di spedizione non può precedere la data di ritiro.", {
+        shipmentDate: "Precede la data di ritiro",
+      });
+    }
     await db
       .update(sampleRequests)
-      .set({ ddtNumber: input.ddtNumber, shippingCost: input.shippingCost ?? null, logisticsNotes: input.logisticsNotes })
+      .set({
+        ddtNumber: input.ddtNumber,
+        shippingCost: input.shippingCost ?? null,
+        logisticsNotes: input.logisticsNotes,
+        shipmentDate,
+      })
       .where(eq(sampleRequests.id, id));
     return { ok: true, message: "Dati amministrativi aggiornati." };
   }
@@ -497,7 +533,7 @@ export async function uploadDdt(
 ): Promise<Result> {
   if (!can(actor.role, "logistics.work")) return fail(DENIED);
   const [current] = await db
-    .select({ status: sampleRequests.status })
+    .select({ status: sampleRequests.status, notificationSentAt: sampleRequests.notificationSentAt })
     .from(sampleRequests)
     .where(eq(sampleRequests.id, id))
     .limit(1);
@@ -519,6 +555,19 @@ export async function uploadDdt(
       uploadedById: actor.id,
     });
   });
+  if (current.notificationSentAt) {
+    return {
+      ok: true,
+      message:
+        "DDT caricato. La conferma di spedizione è già stata inviata: usa il pulsante di invio della conferma per mandarlo al cliente.",
+    };
+  }
+  if (current.status === "COMPLETATA") {
+    return {
+      ok: true,
+      message: "DDT caricato. La richiesta è stata completata senza conferma email: il DDT resta archiviato nella richiesta.",
+    };
+  }
   return { ok: true, message: "DDT caricato: verrà allegato alla conferma di spedizione." };
 }
 
@@ -595,7 +644,9 @@ export async function advanceStatus(
     const confirmation = await maybeSendShipmentConfirmation(actor.id, id);
     message = confirmation
       ? `Richiesta spedita. ${confirmation}`
-      : "Richiesta segnata come spedita. Inserisci tracking e data di spedizione per inviare la conferma al cliente.";
+      : snapshot.notificationSentAt
+        ? "Richiesta segnata come spedita. La conferma era già stata inviata: per mandarla di nuovo usa «Invia conferma al cliente», altrimenti «Completa senza email»."
+        : "Richiesta segnata come spedita. Inserisci tracking e data di spedizione per inviare la conferma al cliente.";
   }
   return { ok: true, message };
 }
@@ -655,7 +706,10 @@ export async function maybeSendShipmentConfirmation(actorId: number | null, id: 
     : `Conferma di spedizione inviata a ${n.to.join(", ")}. Richiesta completata.`;
 }
 
-/** «Invia conferma»: nuovo tentativo dopo un errore, o reinvio esplicito anche se già inviata. */
+/**
+ * «Invia conferma»: nuovo tentativo dopo un errore, o reinvio esplicito anche se già inviata
+ * (es. dopo aver caricato il DDT o riaperto la richiesta). Una richiesta «Spedita» si chiude.
+ */
 export async function resendShipmentConfirmation(actor: Actor, id: number): Promise<Result> {
   if (!can(actor.role, "logistics.work")) return fail(DENIED);
   const loaded = await loadSnapshot(id);
@@ -699,14 +753,22 @@ export async function resendShipmentConfirmation(actor: Actor, id: number): Prom
   return { ok: true, message: closed ? `${message} Richiesta completata.` : message };
 }
 
-/** Chiude una richiesta «Spedita» senza email (es. ritiro in sede, consegna a mano, contatto senza email). */
+/**
+ * Chiude una richiesta «Spedita» senza email (es. ritiro in sede, consegna a mano, contatto senza email).
+ * Senza data di spedizione vale la data di ritiro (obbligatoria per «Spedita»): così i m² entrano
+ * nel report del mese in cui i campioni sono partiti.
+ */
 export async function completeWithoutEmail(actor: Actor, id: number, note: string): Promise<Result> {
   if (!can(actor.role, "logistics.work")) return fail(DENIED);
   if (!note.trim()) return fail("Indica il motivo.", { note: "Indica il motivo" });
   const done = await db.transaction(async (tx) => {
     const rows = await tx
       .update(sampleRequests)
-      .set({ status: "COMPLETATA", completedAt: new Date() })
+      .set({
+        status: "COMPLETATA",
+        completedAt: new Date(),
+        shipmentDate: sql`coalesce(${sampleRequests.shipmentDate}, ${sampleRequests.pickupDate})`,
+      })
       .where(and(eq(sampleRequests.id, id), eq(sampleRequests.status, "SPEDITA")))
       .returning({ id: sampleRequests.id });
     if (rows.length === 0) return false;
@@ -724,8 +786,10 @@ export async function completeWithoutEmail(actor: Actor, id: number, note: strin
 }
 
 /**
- * Correzione: riporta la richiesta allo stato precedente (motivo obbligatorio).
- * Solo l'amministratore può riaprire una richiesta completata (la conferma di spedizione torna da inviare).
+ * Correzione: riporta la richiesta allo stato precedente (motivo obbligatorio). Nessuna email automatica.
+ * Solo l'amministratore può riaprire una richiesta completata: la conferma già inviata resta registrata,
+ * quindi salvare i dati di spedizione non la reinvia; per mandarla di nuovo (e richiudere) si usa
+ * «Invia conferma», altrimenti «Completa senza email».
  */
 export async function revertStatus(actor: Actor, id: number, note: string): Promise<Result> {
   if (!can(actor.role, "requests.revert")) return fail(DENIED);
@@ -744,9 +808,9 @@ export async function revertStatus(actor: Actor, id: number, note: string): Prom
   const done = await db.transaction(async (tx) => {
     const rows = await tx
       .update(sampleRequests)
-      // Riaprendo una richiesta completata la conferma di spedizione torna "da inviare": quando la logistica
-      // salva tracking e data (o usa «Invia conferma») l'email riparte e la richiesta si richiude.
-      .set({ status: prev, ...(current.status === "COMPLETATA" ? { completedAt: null, notificationSentAt: null } : {}) })
+      // notification_sent_at resta: niente nuovo invio automatico al prossimo salvataggio della logistica.
+      // Una richiesta chiusa con «Completa senza email» non ha conferma registrata e la invierà normalmente.
+      .set({ status: prev, ...(current.status === "COMPLETATA" ? { completedAt: null } : {}) })
       .where(and(eq(sampleRequests.id, id), eq(sampleRequests.status, current.status)))
       .returning({ id: sampleRequests.id });
     if (rows.length === 0) return false;
@@ -767,6 +831,10 @@ export async function revertStatus(actor: Actor, id: number, note: string): Prom
 /* Statistiche rapide per i badge della navigazione                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Conteggi per stato; `bolle` = richieste «Pronta per il ritiro» con bolla richiesta e non ancora pronta,
+ * con la stessa regola di `bollaSatisfied` (casella «bolla pronta», numero DDT o DDT caricato).
+ */
 export async function countByStatus(): Promise<Record<RequestStatus, number> & { bolle: number }> {
   const rows = await db
     .select({ status: sampleRequests.status, n: count() })
@@ -779,7 +847,9 @@ export async function countByStatus(): Promise<Record<RequestStatus, number> & {
       and(
         eq(sampleRequests.status, "PRONTA_RITIRO"),
         eq(sampleRequests.deliveryFormRequired, true),
-        sql`${sampleRequests.deliveryFormReady} = false`,
+        eq(sampleRequests.deliveryFormReady, false),
+        sql`coalesce(trim(${sampleRequests.ddtNumber}), '') = ''`,
+        sql`not exists (select 1 from ${attachments} where ${attachments.requestId} = ${sampleRequests.id} and ${attachments.kind} = 'DDT')`,
       ),
     );
   const out = { NUOVA: 0, IN_PREPARAZIONE: 0, PRONTA_RITIRO: 0, SPEDITA: 0, COMPLETATA: 0, bolle: bolle.n };

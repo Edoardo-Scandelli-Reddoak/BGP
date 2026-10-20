@@ -9,16 +9,16 @@ import { BackofficeActionsCard } from "@/components/richieste/backoffice-actions
 import { EmailsPanel } from "@/components/richieste/emails-panel";
 import { HistoryPanel } from "@/components/richieste/history-panel";
 import { NextStepCard } from "@/components/richieste/next-step-card";
+import { RequestEditingProvider } from "@/components/richieste/request-editing";
 import { RequestInfoCard, type RequestEditConfig } from "@/components/richieste/request-info-card";
 import { RequestInfoView } from "@/components/richieste/request-info-view";
 import { StatusStepper } from "@/components/richieste/status-stepper";
-import { romeIsoDate } from "@/components/richieste/utils";
 import { Alert } from "@/components/ui/alert";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/ui/page-header";
 import type { SessionUser } from "@/lib/auth/session";
 import { requireUser } from "@/lib/auth/session";
-import { formatDateTime, parseRequestCode, requestCode, todayIso } from "@/lib/format";
+import { formatDateTime, parseRequestCode, requestCode, romeIsoDate, todayIso } from "@/lib/format";
 import { getRequestDetail, type RequestDetail } from "@/lib/requests/queries";
 import { getWorkflowSnapshot } from "@/lib/requests/service";
 import { EDITABLE_IN } from "@/lib/requests/workflow";
@@ -90,6 +90,7 @@ function editConfig(request: RequestDetail, user: SessionUser): RequestEditConfi
     requestId: request.id,
     today: todayIso(),
     itemsEditable,
+    canSendToWarehouse: request.status === "NUOVA",
     itemsLockedReason: itemsEditable
       ? undefined
       : `Nello stato «${STATUS_LABELS[request.status]}» i prodotti non sono più modificabili: per cambiarli riporta prima la richiesta a «In preparazione».`,
@@ -139,6 +140,7 @@ export default async function RichiestaDettaglioPage({ params, searchParams }: P
   const back = backLink(user);
   const step = STATUS_ORDER.indexOf(request.status);
   const code = requestCode(request.id);
+  const contactHref = can(user.role, "registry.view") ? `/anagrafiche/contatti/${request.contact.id}` : null;
 
   const infoPanel = (
     <RequestInfoCard
@@ -195,14 +197,19 @@ export default async function RichiestaDettaglioPage({ params, searchParams }: P
 
       <div className="mt-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">
-          <NextStepCard
-            requestId={request.id}
-            status={request.status}
-            completedAt={request.completedAt}
-            snapshot={snapshot}
-            user={user}
-          />
-          {panels.map(([key, node]) => (node ? <Fragment key={key}>{node}</Fragment> : null))}
+          {/* key = stato: dopo «Salva e invia» o una correzione il form di modifica si chiude da solo. */}
+          <RequestEditingProvider status={request.status}>
+            <NextStepCard
+              requestId={request.id}
+              status={request.status}
+              completedAt={request.completedAt}
+              snapshot={snapshot}
+              user={user}
+              contactNeedsReview={request.contact.needsReview}
+              contactHref={contactHref}
+            />
+            {panels.map(([key, node]) => (node ? <Fragment key={key}>{node}</Fragment> : null))}
+          </RequestEditingProvider>
         </div>
         <div className="min-w-0 space-y-6">
           <BackofficeActionsCard requestId={request.id} status={request.status} user={user} />

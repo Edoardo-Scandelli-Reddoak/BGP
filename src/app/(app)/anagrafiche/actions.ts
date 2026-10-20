@@ -10,7 +10,9 @@ import { fail, NOT_AUTHORIZED, zodFieldErrors, type ActionResult } from "@/lib/a
 import { getAuthorizedUser } from "@/lib/auth/session";
 import { importContacts, importProducts, type ImportSummary } from "@/lib/import/import-db";
 import { readTabularFile } from "@/lib/import/read-file";
-import { IMPORT_EXTENSIONS, IMPORT_MAX_BYTES, safeReturnPath } from "@/components/anagrafiche/constants";
+import { safeReturnPath } from "@/lib/safe-path";
+import { parseDbId } from "@/lib/validation";
+import { IMPORT_EXTENSIONS, IMPORT_MAX_BYTES } from "@/components/anagrafiche/constants";
 import { contactUsage, productUsage } from "./_lib/queries";
 import { contactFromForm, contactInput, formText, productFromForm, productInput } from "./_lib/schemas";
 
@@ -26,8 +28,7 @@ function pgCode(err: unknown): string | undefined {
 }
 
 function parseId(fd: FormData): number | null {
-  const n = Number(formText(fd, "id"));
-  return Number.isInteger(n) && n > 0 ? n : null;
+  return parseDbId(formText(fd, "id"));
 }
 
 /* ------------------------------------------------------------------ */
@@ -93,7 +94,7 @@ export async function saveContact(_prev: State, fd: FormData): Promise<ActionRes
   redirect(`/anagrafiche/contatti/${row.id}?creato=1`);
 }
 
-/** Toglie il segnale "Da verificare" (contatti arrivati dal modulo pubblico). */
+/** Toglie il segnale "Da verificare" (contatti dal modulo pubblico o importati con dati mancanti). */
 export async function markContactVerified(_prev: State, fd: FormData): Promise<ActionResult> {
   const user = await getAuthorizedUser("registry.edit");
   if (!user) return NOT_AUTHORIZED;

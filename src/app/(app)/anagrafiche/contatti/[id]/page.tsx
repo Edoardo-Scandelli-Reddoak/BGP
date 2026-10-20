@@ -16,15 +16,12 @@ import { getAuthorizedUser, requireUser } from "@/lib/auth/session";
 import { parseEmailList } from "@/lib/email/recipients";
 import { formatDate, formatDateTime, formatM2, formatNumber, LANGUAGE_LABELS, requestCode } from "@/lib/format";
 import { can } from "@/lib/roles";
+import { parseDbId } from "@/lib/validation";
 import { deleteContact, markContactVerified } from "../../actions";
 import { getContactDetail, listAgents, listCountries, param, type ContactDetail } from "../../_lib/queries";
 
-function parseIdParam(value: string): number | null {
-  return /^\d{1,9}$/.test(value) ? Number(value) : null;
-}
-
 export async function generateMetadata({ params }: PageProps<"/anagrafiche/contatti/[id]">): Promise<Metadata> {
-  const id = parseIdParam((await params).id);
+  const id = parseDbId((await params).id);
   const user = await getAuthorizedUser("registry.view");
   const data = id && user ? await getContactDetail(id) : null;
   return { title: data ? data.contact.name : "Contatto" };
@@ -32,7 +29,7 @@ export async function generateMetadata({ params }: PageProps<"/anagrafiche/conta
 
 export default async function ContactDetailPage({ params, searchParams }: PageProps<"/anagrafiche/contatti/[id]">) {
   const user = await requireUser("registry.view");
-  const id = parseIdParam((await params).id);
+  const id = parseDbId((await params).id);
   if (!id) notFound();
   const data = await getContactDetail(id);
   if (!data) notFound();
@@ -75,7 +72,8 @@ export default async function ContactDetailPage({ params, searchParams }: PagePr
         {contact.needsReview ? (
           <Alert tone="warning" title="Contatto da verificare">
             <p>
-              Creato dal modulo pubblico di richiesta campioni. Controlla nome, email, indirizzo e lingua
+              Arrivato dal modulo pubblico di richiesta campioni o importato da file con dati mancanti (es. lingua non
+              indicata). Controlla nome, email, indirizzo e lingua
               {canEdit ? ", poi segnalo come verificato." : "."}
             </p>
             {canEdit ? (

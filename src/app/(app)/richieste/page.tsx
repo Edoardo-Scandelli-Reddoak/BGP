@@ -15,6 +15,7 @@ import { requireUser } from "@/lib/auth/session";
 import { requestCode } from "@/lib/format";
 import { can } from "@/lib/roles";
 import { OPEN_STATUSES, STATUS_LABELS } from "@/lib/status";
+import { parseDbId } from "@/lib/validation";
 import { getOpenRequests, OPEN_LIST_PAGE_SIZE } from "./list-query";
 
 export const metadata: Metadata = { title: "Richieste aperte" };
@@ -44,7 +45,7 @@ export default async function RichiestePage({ searchParams }: PageProps<"/richie
   const publicOnly = first(sp.origine) === "MODULO_PUBBLICO";
   const origine = publicOnly ? "MODULO_PUBBLICO" : null;
   const page = parsePage(sp.pagina);
-  const deletedId = Number(first(sp.eliminata));
+  const deletedId = parseDbId(first(sp.eliminata));
 
   const { rows, counts, totalOpen, total } = await getOpenRequests({ status, q, publicOnly, page });
   const filtered = Boolean(q || publicOnly || status);
@@ -74,7 +75,7 @@ export default async function RichiestePage({ searchParams }: PageProps<"/richie
         }
       />
 
-      {Number.isInteger(deletedId) && deletedId > 0 ? (
+      {deletedId ? (
         <Alert tone="success" className="mb-4">
           Richiesta {requestCode(deletedId)} eliminata.
         </Alert>

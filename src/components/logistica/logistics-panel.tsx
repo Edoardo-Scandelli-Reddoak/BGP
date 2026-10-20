@@ -7,8 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, DetailItem } from "@/components/ui/card";
 import type { SessionUser } from "@/lib/auth/session";
-import { trackingUrl } from "@/lib/email/notifications";
-import { parseEmailList } from "@/lib/email/recipients";
+import { confirmationRecipients, trackingUrl } from "@/lib/email/notifications";
 import { formatDate, formatDateTime, formatEuro, LANGUAGE_LABELS } from "@/lib/format";
 import type { RequestDetail } from "@/lib/requests/queries";
 import {
@@ -85,12 +84,7 @@ export async function LogisticsPanel({
     : null;
 
   // Destinatari della conferma: stessa regola dell'invio (agente in copia solo per i clienti).
-  const to = parseEmailList(request.contact.email);
-  const toKeys = new Set(to.map((e) => e.toLowerCase()));
-  const cc =
-    request.contact.type === "CLIENTE" && request.contact.agent
-      ? parseEmailList(request.contact.agent.email).filter((e) => !toKeys.has(e.toLowerCase()))
-      : [];
+  const { to, cc } = confirmationRecipients(request.contact);
   const lastConfirmation = request.emails.find((e) => e.kind === "CONFERMA_SPEDIZIONE") ?? null;
   const confirmationProblems = shipmentConfirmationProblems(snapshot);
   const bollaOk = bollaSatisfied(snapshot);
@@ -324,6 +318,7 @@ export async function LogisticsPanel({
           }}
           deliveryFormRequired={request.deliveryFormRequired}
           autoConfirmation={to.length > 0 && request.notificationSentAt === null}
+          ddtUploaded={ddt !== null}
           trackingHref={trackingHref}
         />
       </CardBody>
@@ -336,7 +331,13 @@ export async function LogisticsPanel({
             oppure spunta «Bolla pronta».
           </p>
         ) : null}
-        <DdtSection requestId={request.id} ddt={ddt} editable />
+        <DdtSection
+          requestId={request.id}
+          ddt={ddt}
+          editable
+          confirmationSent={request.notificationSentAt !== null}
+          completed={completed}
+        />
       </CardBody>
 
       <CardBody className="border-t border-slate-100">

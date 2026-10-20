@@ -11,13 +11,11 @@ import {
   sampleRequests,
   type ContactType,
   type Language,
-  type RequestStatus,
 } from "@/db/schema";
 import { likePattern } from "@/lib/search";
+import { SHIPPED_STATUSES } from "@/lib/status";
+import { parseDbId } from "@/lib/validation";
 import { PAGE_SIZE } from "@/components/anagrafiche/constants";
-
-/** Stati in cui i campioni sono partiti: contano per i m² inviati. */
-const SHIPPED: RequestStatus[] = ["SPEDITA", "COMPLETATA"];
 
 function words(q: string): string[] {
   return q.trim().split(/\s+/).filter(Boolean).slice(0, 6);
@@ -55,7 +53,7 @@ export function parseContactFilters(sp: Params): ContactFilters {
   return {
     q: param(sp, "q").slice(0, 200),
     type: tipo === "AGENTE" || tipo === "CLIENTE" ? tipo : null,
-    agent: agente === "nessuno" ? "nessuno" : /^\d{1,9}$/.test(agente) ? Number(agente) : null,
+    agent: agente === "nessuno" ? "nessuno" : parseDbId(agente),
     language: lingua === "it" || lingua === "en" || lingua === "fr" || lingua === "de" ? lingua : null,
     country: param(sp, "paese").slice(0, 80) || null,
     review: param(sp, "verifica") === "1",
@@ -161,7 +159,7 @@ export const getContactDetail = cache(async (id: number) => {
     db
       .select({
         total: count(),
-        shipped: sql<number>`count(*) filter (where ${inArray(sampleRequests.status, SHIPPED)})`.mapWith(Number),
+        shipped: sql<number>`count(*) filter (where ${inArray(sampleRequests.status, SHIPPED_STATUSES)})`.mapWith(Number),
         open: sql<number>`count(*) filter (where ${sampleRequests.status} <> 'COMPLETATA')`.mapWith(Number),
       })
       .from(sampleRequests)
@@ -170,7 +168,7 @@ export const getContactDetail = cache(async (id: number) => {
       .select({ m2: sql<number>`coalesce(sum(${pieces.areaM2}), 0)`.mapWith(Number) })
       .from(pieces)
       .innerJoin(sampleRequests, eq(sampleRequests.id, pieces.requestId))
-      .where(and(eq(sampleRequests.contactId, id), inArray(sampleRequests.status, SHIPPED))),
+      .where(and(eq(sampleRequests.contactId, id), inArray(sampleRequests.status, SHIPPED_STATUSES))),
     db
       .select({
         total: count(),
@@ -262,7 +260,7 @@ export async function listProducts(f: ProductFilters, page: number) {
     .select({ productId: pieces.productId, m2: sql<string>`sum(${pieces.areaM2})`.as("m2") })
     .from(pieces)
     .innerJoin(sampleRequests, eq(sampleRequests.id, pieces.requestId))
-    .where(inArray(sampleRequests.status, SHIPPED))
+    .where(inArray(sampleRequests.status, SHIPPED_STATUSES))
     .groupBy(pieces.productId)
     .as("shipped");
 
@@ -338,7 +336,7 @@ export const getProductDetail = cache(async (id: number) => {
       })
       .from(pieces)
       .innerJoin(sampleRequests, eq(sampleRequests.id, pieces.requestId))
-      .where(and(eq(pieces.productId, id), inArray(sampleRequests.status, SHIPPED))),
+      .where(and(eq(pieces.productId, id), inArray(sampleRequests.status, SHIPPED_STATUSES))),
     db
       .select({
         requestId: sampleRequests.id,

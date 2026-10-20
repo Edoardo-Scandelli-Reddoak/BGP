@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { submitPublicRequest } from "@/app/richiedi-campioni/actions";
 import { PendingButton, useFormAction } from "@/components/impostazioni/form-kit";
 import { ProductPicker } from "@/components/pickers/product-picker";
@@ -22,13 +23,22 @@ const LANGUAGES: { value: string; label: string }[] = [
 ];
 
 /** Contenitore: dopo l'invio permette di compilare una nuova richiesta da zero. */
-export function PublicRequestSection({ maxProducts, maxQuantity }: { maxProducts: number; maxQuantity: number }) {
+export function PublicRequestSection({
+  maxProducts,
+  maxQuantity,
+  formToken,
+}: {
+  maxProducts: number;
+  maxQuantity: number;
+  formToken: string;
+}) {
   const [round, setRound] = useState(0);
   return (
     <PublicRequestForm
       key={round}
       maxProducts={maxProducts}
       maxQuantity={maxQuantity}
+      formToken={formToken}
       onNewRequest={() => setRound((r) => r + 1)}
     />
   );
@@ -47,12 +57,15 @@ function Section({ title, description, children }: { title: string; description?
 function PublicRequestForm({
   maxProducts,
   maxQuantity,
+  formToken,
   onNewRequest,
 }: {
   maxProducts: number;
   maxQuantity: number;
+  formToken: string;
   onNewRequest: () => void;
 }) {
+  const router = useRouter();
   const { state, pending, onSubmit, fieldError } = useFormAction<PublicRequestResult>(submitPublicRequest);
   const [type, setType] = useState<RequesterType | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -65,7 +78,9 @@ function PublicRequestForm({
     if (!state) return;
     if (state.ok) topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     else errorRef.current?.focus();
-  }, [state]);
+    // Gettone scaduto (pagina aperta da più di un giorno): nuovo gettone senza perdere i dati inseriti.
+    if (!state.ok && state.fieldErrors?.formToken) router.refresh();
+  }, [state, router]);
 
   if (state?.ok) {
     return (
@@ -97,6 +112,7 @@ function PublicRequestForm({
   }
 
   const isAgent = type === "AGENTE";
+  const totalPieces = items.reduce((sum, i) => sum + i.quantity, 0);
   const err = (name: string) => fieldError(name);
   const invalid = (name: string) => (fieldError(name) ? true : undefined);
 
@@ -397,7 +413,7 @@ function PublicRequestForm({
         {items.length > 0 ? (
           <p className="text-xs text-slate-500">
             {items.length} prodott{items.length === 1 ? "o" : "i"} su {maxProducts} ·{" "}
-            {items.reduce((sum, i) => sum + i.quantity, 0)} pezzi in totale
+            {totalPieces} {totalPieces === 1 ? "pezzo" : "pezzi"} in totale
           </p>
         ) : null}
       </Section>
@@ -413,6 +429,7 @@ function PublicRequestForm({
         </Field>
       </Section>
 
+      <input type="hidden" name="formToken" value={formToken} />
       {/* Campo trappola per i bot: nascosto alle persone e alle tecnologie assistive. */}
       <div aria-hidden="true" className="absolute -left-[10000px] top-0 h-px w-px overflow-hidden">
         <label htmlFor="website">Sito web (lascia vuoto)</label>

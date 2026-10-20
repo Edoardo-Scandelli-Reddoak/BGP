@@ -2,7 +2,7 @@ import "server-only";
 import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { contacts, pieces, products, sampleRequests, type RequestStatus } from "@/db/schema";
-import { shippedBetween } from "./conditions";
+import { effectiveShipmentDate, shippedBetween } from "./conditions";
 import { monthEnd, monthStart } from "./period";
 
 export type M2ProductRow = {
@@ -19,7 +19,10 @@ export type M2ProductRow = {
 export type M2Shipment = {
   id: number;
   status: RequestStatus;
+  /** Data di spedizione effettiva: quella inserita dalla logistica, altrimenti la data di ritiro. */
   shipmentDate: string | null;
+  /** true se manca la data di spedizione e il mese è dato dalla data di ritiro del corriere. */
+  pickupDateUsed: boolean;
   contactName: string;
   country: string | null;
   pieces: number;
@@ -36,8 +39,9 @@ export type MonthlyM2Report = {
 };
 
 /**
- * Report m² del mese per il CRM. Regola: i m² contano nel mese della data di spedizione
- * della richiesta (stato Spedita o Completata); i m² vengono dai pezzi misurati dal magazzino.
+ * Report m² del mese per il CRM. Regola: i m² contano nel mese della data di spedizione effettiva
+ * della richiesta (stato Spedita o Completata; senza data di spedizione vale la data di ritiro del
+ * corriere); i m² vengono dai pezzi misurati dal magazzino.
  */
 export async function getMonthlyM2Report(month: string): Promise<MonthlyM2Report> {
   const inMonth = shippedBetween(monthStart(month), monthEnd(month));
@@ -65,7 +69,8 @@ export async function getMonthlyM2Report(month: string): Promise<MonthlyM2Report
       .select({
         id: sampleRequests.id,
         status: sampleRequests.status,
-        shipmentDate: sampleRequests.shipmentDate,
+        shipmentDate: effectiveShipmentDate,
+        pickupDateUsed: sql<boolean>`(${sampleRequests.shipmentDate} is null)`,
         contactName: contacts.name,
         country: contacts.country,
         pieces: qtySum,
@@ -76,7 +81,7 @@ export async function getMonthlyM2Report(month: string): Promise<MonthlyM2Report
       .leftJoin(pieces, eq(pieces.requestId, sampleRequests.id))
       .where(inMonth)
       .groupBy(sampleRequests.id, contacts.id)
-      .orderBy(asc(sampleRequests.shipmentDate), asc(sampleRequests.id)),
+      .orderBy(asc(effectiveShipmentDate), asc(sampleRequests.id)),
   ]);
 
   const withPieces = shipments.filter((s) => s.pieces > 0).length;

@@ -6,25 +6,45 @@ import { formatEmailList, parseEmailList } from "@/lib/email/recipients";
  *  - contatti: export Airtable "Lista_clienti_Airtable.xlsx"
  *    colonne Name | Email | Default address | Agent name | Agent email (cc) | Language
  *  - prodotti: "Product list.xlsx" — colonne Codice_articolo | Descrizione_articolo_estesa
+ *    (+ facoltative Marchio | Categoria)
  * Le intestazioni sono riconosciute anche con varianti (italiano/inglese, maiuscole, spazi).
  */
 
 export type RawRow = Record<string, unknown>;
 
-export type ParsedAgent = { key: string; name: string; email: string | null };
+export type ParsedAgent = {
+  key: string;
+  name: string;
+  email: string | null;
+  /** Prima riga del file in cui compare l'agente (per i messaggi dell'import). */
+  row: number;
+};
 
 export type ParsedCustomer = {
   key: string;
+  /** Riga del file (1 = intestazioni). */
+  row: number;
   name: string;
   email: string | null;
   defaultAddress: string | null;
   country: string | null;
-  language: Language;
+  /** true se il paese è ricavato dall'indirizzo (non dalla colonna Paese): non sovrascrive quello salvato. */
+  countryDerived: boolean;
+  /** null se la cella è vuota o la lingua non è riconosciuta (BGP: la lingua è obbligatoria). */
+  language: Language | null;
+  /** Valore originale della colonna lingua (per i messaggi). */
+  languageRaw: string;
   phone: string | null;
   agentKey: string | null;
 };
 
-export type ParsedProduct = { code: string; description: string };
+export type ParsedProduct = {
+  code: string;
+  description: string;
+  /** Colonne facoltative: null se assenti o vuote (non cancellano il valore salvato). */
+  brand: string | null;
+  category: string | null;
+};
 
 export type ParseReport<T> = { rows: T[]; skipped: { row: number; reason: string }[] };
 
@@ -69,14 +89,47 @@ export function cleanAddress(value: unknown): string | null {
 
 const ITALIAN_STREET = /^(VIA|VIALE|V\.LE|PIAZZA|P\.ZZA|PIAZZALE|CORSO|C\.SO|LOCALITA'?|LOC\.|STRADA|CONTRADA|C\.DA|LARGO|VICOLO|VICO|FRAZIONE|FRAZ\.|BORGO|SALITA|LUNGOMARE)\b/i;
 
+/** Sigle delle province italiane (attuali e soppresse ancora in uso negli indirizzi). */
+const ITALIAN_PROVINCES = new Set(
+  (
+    "AG AL AN AO AP AQ AR AT AV BA BG BI BL BN BO BR BS BT BZ CA CB CE CH CI CL CN CO CR CS CT CZ " +
+    "EN FC FE FG FI FM FO FR GE GO GR IM IS KR LC LE LI LO LT LU MB MC ME MI MN MO MS MT NA NO NU " +
+    "OG OR OT PA PC PD PE PG PI PN PO PR PS PT PU PV PZ RA RC RE RG RI RM RN RO SA SI SO SP SR SS " +
+    "SU SV TA TE TN TO TP TR TS TV UD VA VB VC VE VI VR VS VT VV"
+  ).split(" "),
+);
+
+/** CAP italiano (5 cifre) prima della località. */
+const ITALIAN_CAP = /(?:^|[\s,])\d{5}\s+\S/;
+/** CAP svizzero (4 cifre) prima della località. */
+const SWISS_POSTCODE = /(?:^|[\s,])\d{4}\s+\S/;
+/** Sigle usate nel file per la Svizzera: CH (o il cantone, es. TI, ZH) con CAP a 4 cifre. */
+const SWISS_CODES = new Set(["CH", "TI", "ZH"]);
+
 /**
- * Gli indirizzi italiani del file finiscono con la sigla di provincia "(BG)": in quel caso il paese è Italia.
- * Alcuni indirizzi italiani hanno la provincia vuota "()": li riconosciamo da toponimo italiano + CAP a 5 cifre.
+ * Paese ricavato dall'indirizzo del file Airtable di BGP:
+ *  - "…, 24023 CLUSONE (BG)": sigla di provincia italiana + CAP a 5 cifre → Italia
+ *    (senza CAP a 5 cifre la sigla è di un paese estero: (CH) Chieti o Svizzera, (SI) Siena o Slovenia…);
+ *  - (HR) → Croazia, (SM) → San Marino, (CH)/(TI)/(ZH) con CAP a 4 cifre → Svizzera;
+ *  - (EE) "Escursionisti Esteri" e le altre sigle → non indicato (da completare in anagrafica);
+ *  - provincia vuota "()": Italia solo con toponimo italiano, CAP a 5 cifre e lingua italiana
+ *    (o non indicata), perché "Via …" si trova anche in Svizzera e Croazia.
  */
-export function countryFromAddress(address: unknown): string | null {
-  const s = str(address);
-  if (/\([A-Z]{2}\)\s*$/.test(s)) return "Italia";
-  if (/\(\s*\)\s*$/.test(s) && ITALIAN_STREET.test(s) && /(^|[\s,])\d{5}\s+[A-Z]/.test(s)) return "Italia";
+export function countryFromAddress(address: unknown, language: Language | null = null): string | null {
+  const raw = str(address);
+  const emptyProvince = /\(\s*\)\s*$/.test(raw);
+  const s = raw.replace(/\s*\(\s*\)\s*$/, "");
+  const code = s.match(/\(([A-Z]{2})\)\s*$/)?.[1];
+  if (code) {
+    if (ITALIAN_PROVINCES.has(code) && ITALIAN_CAP.test(s)) return "Italia";
+    if (code === "HR") return "Croazia";
+    if (code === "SM") return "San Marino";
+    if (SWISS_CODES.has(code) && SWISS_POSTCODE.test(s)) return "Svizzera";
+    return null;
+  }
+  if (emptyProvince && ITALIAN_STREET.test(s) && ITALIAN_CAP.test(s) && (language === null || language === "it")) {
+    return "Italia";
+  }
   return null;
 }
 
@@ -123,6 +176,8 @@ export const IMPORT_COLUMNS = {
   country: ["Country", "Paese", "Nazione"],
   code: ["Codice_articolo", "Codice articolo", "Codice", "SKU", "SKU code", "Code"],
   description: ["Descrizione_articolo_estesa", "Descrizione articolo estesa", "Descrizione", "Description", "Product name"],
+  brand: ["Marchio", "Brand"],
+  category: ["Categoria", "Category"],
 };
 
 export function parseContactRows(rows: RawRow[]): {
@@ -146,7 +201,9 @@ export function parseContactRows(rows: RawRow[]): {
     let aKey: string | null = null;
     if (agentName || agentEmail) {
       aKey = agentKey(agentName || agentEmail || "", agentEmail);
-      if (!agents.has(aKey)) agents.set(aKey, { key: aKey, name: agentName || agentEmail || "Agente", email: agentEmail });
+      if (!agents.has(aKey)) {
+        agents.set(aKey, { key: aKey, name: agentName || agentEmail || "Agente", email: agentEmail, row: rowNum });
+      }
     }
     const address = cleanAddress(pick(row, IMPORT_COLUMNS.address));
     const key = customerKey(name, address);
@@ -156,13 +213,18 @@ export function parseContactRows(rows: RawRow[]): {
     }
     seen.add(key);
     const explicitCountry = str(pick(row, IMPORT_COLUMNS.country));
+    const languageRaw = str(pick(row, IMPORT_COLUMNS.language));
+    const language = normalizeLanguage(languageRaw);
     customers.push({
       key,
+      row: rowNum,
       name,
       email: normalizeEmails(pick(row, IMPORT_COLUMNS.email)),
       defaultAddress: address,
-      country: explicitCountry || countryFromAddress(pick(row, IMPORT_COLUMNS.address)),
-      language: normalizeLanguage(pick(row, IMPORT_COLUMNS.language)) ?? "it",
+      country: explicitCountry || countryFromAddress(pick(row, IMPORT_COLUMNS.address), language),
+      countryDerived: !explicitCountry,
+      language,
+      languageRaw,
       phone: str(pick(row, IMPORT_COLUMNS.phone)) || null,
       agentKey: aKey,
     });
@@ -186,7 +248,9 @@ export function parseProductRows(rows: RawRow[]): ParseReport<ParsedProduct> {
       skipped.push({ row: i + 2, reason: `Codice duplicato ${code}` });
       return;
     }
-    out.set(k, { code, description });
+    const brand = str(pick(row, IMPORT_COLUMNS.brand)).replace(/\s{2,}/g, " ") || null;
+    const category = str(pick(row, IMPORT_COLUMNS.category)).replace(/\s{2,}/g, " ") || null;
+    out.set(k, { code, description, brand, category });
   });
   return { rows: [...out.values()], skipped };
 }

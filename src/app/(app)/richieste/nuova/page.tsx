@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { requireUser } from "@/lib/auth/session";
 import { todayIso } from "@/lib/format";
 import { can } from "@/lib/roles";
+import { parseDbId } from "@/lib/validation";
 
 export const metadata: Metadata = { title: "Nuova richiesta" };
 
@@ -39,8 +40,9 @@ async function loadContact(id: number): Promise<FormContact | null> {
 export default async function NuovaRichiestaPage({ searchParams }: PageProps<"/richieste/nuova">) {
   const user = await requireUser("requests.manage");
   const { contatto } = await searchParams;
-  const contactId = Number(Array.isArray(contatto) ? contatto[0] : contatto);
-  const contact = Number.isInteger(contactId) && contactId > 0 ? await loadContact(contactId) : null;
+  // Id fuori dai limiti di Postgres → «contatto non trovato», mai un errore del database.
+  const contactId = parseDbId(Array.isArray(contatto) ? contatto[0] : contatto);
+  const contact = contactId ? await loadContact(contactId) : null;
   const contactNotFound = contatto !== undefined && !contact;
   const today = todayIso();
 

@@ -14,11 +14,20 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
+function printRows(title: string, rows: { row: number; reason: string }[], max = 15) {
+  if (rows.length === 0) return;
+  console.log(`  ${title}:`);
+  for (const r of rows.slice(0, max)) console.log(`    riga ${r.row}: ${r.reason}`);
+  if (rows.length > max) console.log(`    … altre ${rows.length - max}`);
+}
+
 function print(label: string, s: ImportSummary) {
-  console.log(`\n${label}: ${s.created} creati, ${s.updated} aggiornati, ${s.unchanged} invariati, ${s.skipped.length} scartati`);
+  console.log(
+    `\n${label}: ${s.created} creati, ${s.updated} aggiornati, ${s.unchanged} invariati, ${s.skipped.length} scartati, ${s.warnings.length} da verificare`,
+  );
   if (s.agentsCreated !== undefined) console.log(`  agenti: ${s.agentsCreated} creati, ${s.agentsUpdated} aggiornati`);
-  for (const sk of s.skipped.slice(0, 15)) console.log(`  riga ${sk.row}: ${sk.reason}`);
-  if (s.skipped.length > 15) console.log(`  … altri ${s.skipped.length - 15}`);
+  printRows("scartati", s.skipped);
+  printRows("da verificare", s.warnings);
 }
 
 async function main() {

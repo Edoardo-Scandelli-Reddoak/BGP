@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
-import { z } from "zod";
 import { db } from "@/db";
 import { sampleRequests } from "@/db/schema";
 import { fail, NOT_AUTHORIZED, type ActionResult } from "@/lib/action-result";
@@ -18,10 +17,10 @@ import {
   uploadDdt,
   type LogisticsInput,
 } from "@/lib/requests/service";
+import { parseDbId } from "@/lib/validation";
 
 type State = ActionResult | null;
 
-const requestId = z.number().int().positive();
 
 /** Valore testuale del form; campo vuoto (es. data non compilata) → null. */
 function text(formData: FormData, name: string): string | null {
@@ -48,7 +47,10 @@ function done(result: ActionResult): ActionResult {
 export async function saveLogisticsData(id: number, _prev: State, formData: FormData): Promise<ActionResult> {
   const user = await getAuthorizedUser("logistics.work");
   if (!user) return NOT_AUTHORIZED;
-  if (!requestId.safeParse(id).success) return fail("Richiesta non valida.");
+  // L'id arriva dal client (argomento legato con bind): va normalizzato, non solo controllato.
+  const safeId = parseDbId(id);
+  if (!safeId) return fail("Richiesta non valida.");
+  id = safeId;
 
   // Il form mostra campi diversi a seconda dello stato: se nel frattempo lo stato è cambiato
   // (es. richiesta riaperta), salvare svuoterebbe i campi non presenti.
@@ -104,7 +106,10 @@ function detectDdtType(bytes: Uint8Array): { mime: string; ext: string } | null 
 export async function uploadDdtFile(id: number, _prev: State, formData: FormData): Promise<ActionResult> {
   const user = await getAuthorizedUser("logistics.work");
   if (!user) return NOT_AUTHORIZED;
-  if (!requestId.safeParse(id).success) return fail("Richiesta non valida.");
+  // L'id arriva dal client (argomento legato con bind): va normalizzato, non solo controllato.
+  const safeId = parseDbId(id);
+  if (!safeId) return fail("Richiesta non valida.");
+  id = safeId;
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return fail("Seleziona il file del DDT.", { file: "Seleziona un file" });
@@ -123,7 +128,10 @@ export async function removeDdtFile(id: number, _prev: State, _formData: FormDat
   void _formData;
   const user = await getAuthorizedUser("logistics.work");
   if (!user) return NOT_AUTHORIZED;
-  if (!requestId.safeParse(id).success) return fail("Richiesta non valida.");
+  // L'id arriva dal client (argomento legato con bind): va normalizzato, non solo controllato.
+  const safeId = parseDbId(id);
+  if (!safeId) return fail("Richiesta non valida.");
+  id = safeId;
   return done(await deleteDdt(user, id));
 }
 
@@ -132,7 +140,10 @@ export async function sendShipmentConfirmation(id: number, _prev: State, _formDa
   void _formData;
   const user = await getAuthorizedUser("logistics.work");
   if (!user) return NOT_AUTHORIZED;
-  if (!requestId.safeParse(id).success) return fail("Richiesta non valida.");
+  // L'id arriva dal client (argomento legato con bind): va normalizzato, non solo controllato.
+  const safeId = parseDbId(id);
+  if (!safeId) return fail("Richiesta non valida.");
+  id = safeId;
   const result = await resendShipmentConfirmation(user, id);
   // Anche un errore d'invio va registrato nel registro email: aggiorno comunque la pagina.
   revalidatePath("/", "layout");
@@ -142,7 +153,10 @@ export async function sendShipmentConfirmation(id: number, _prev: State, _formDa
 export async function completeWithoutConfirmation(id: number, _prev: State, formData: FormData): Promise<ActionResult> {
   const user = await getAuthorizedUser("logistics.work");
   if (!user) return NOT_AUTHORIZED;
-  if (!requestId.safeParse(id).success) return fail("Richiesta non valida.");
+  // L'id arriva dal client (argomento legato con bind): va normalizzato, non solo controllato.
+  const safeId = parseDbId(id);
+  if (!safeId) return fail("Richiesta non valida.");
+  id = safeId;
   const note = (text(formData, "note") ?? "").trim();
   if (!note) return fail("Indica il motivo.", { note: "Indica il motivo" });
   if (note.length > 500) return fail("Motivo troppo lungo.", { note: "Massimo 500 caratteri" });
@@ -157,7 +171,10 @@ export async function completeWithoutConfirmation(id: number, _prev: State, form
 export async function saveShippingCost(id: number, _prev: State, formData: FormData): Promise<ActionResult> {
   const user = await getAuthorizedUser("logistics.work");
   if (!user) return NOT_AUTHORIZED;
-  if (!requestId.safeParse(id).success) return fail("Richiesta non valida.");
+  // L'id arriva dal client (argomento legato con bind): va normalizzato, non solo controllato.
+  const safeId = parseDbId(id);
+  if (!safeId) return fail("Richiesta non valida.");
+  id = safeId;
 
   const shippingCost = readCost(formData);
   if (shippingCost === undefined) return fail("Importo non valido (es. 12,50).", { shippingCost: "Importo non valido" });

@@ -82,7 +82,7 @@ export function ContactSummary({
               )}
             </>
           ) : (
-            <span className="text-slate-400">{contact.type === "AGENTE" ? "—" : "Nessun agente (cliente diretto)"}</span>
+            <span className="text-slate-400">{contact.type === "AGENTE" ? "—" : "Nessun agente (cliente direzionale)"}</span>
           )}
         </Row>
       </dl>

@@ -84,8 +84,8 @@ export default async function ContactsPage({ searchParams }: PageProps<"/anagraf
         {toReview > 0 && !filters.review ? (
           <Alert tone="warning">
             {toReview === 1
-              ? "1 contatto arrivato dal modulo pubblico è da verificare."
-              : `${toReview} contatti arrivati dal modulo pubblico sono da verificare.`}{" "}
+              ? "1 contatto è da verificare (arrivato dal modulo pubblico o importato con dati mancanti)."
+              : `${toReview} contatti sono da verificare (arrivati dal modulo pubblico o importati con dati mancanti).`}{" "}
             <Link href={`${BASE}?verifica=1`} className="font-semibold underline underline-offset-2">
               Mostra
             </Link>

@@ -11,14 +11,15 @@ import { MIN_PASSWORD_LENGTH } from "@/lib/auth/password";
 import { requireUser } from "@/lib/auth/session";
 import { formatDateTime } from "@/lib/format";
 import { ROLE_LABELS } from "@/lib/roles";
+import { parseDbId } from "@/lib/validation";
 
 export const metadata: Metadata = { title: "Modifica utente — Impostazioni" };
 
 export default async function EditUserPage({ params }: PageProps<"/impostazioni/utenti/[id]">) {
   const me = await requireUser("settings.manage");
   const { id } = await params;
-  const userId = Number(id);
-  if (!Number.isInteger(userId) || userId <= 0) notFound();
+  const userId = parseDbId(id);
+  if (userId === null) notFound();
 
   const [user] = await db
     .select({

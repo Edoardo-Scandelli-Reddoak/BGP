@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { fail, NOT_AUTHORIZED, type ActionResult } from "@/lib/action-result";
 import { getAuthorizedUser } from "@/lib/auth/session";
 import {
@@ -13,13 +13,28 @@ import {
   updateRequestInfo,
   type RequestInfoInput,
 } from "@/lib/requests/service";
+import { parseDbId } from "@/lib/validation";
 
 type State = ActionResult | null;
 
 const INVALID_ID = fail("Richiesta non valida.");
 
 function validId(id: unknown): id is number {
-  return typeof id === "number" && Number.isInteger(id) && id > 0;
+  return typeof id === "number" && parseDbId(id) === id;
+}
+
+/**
+ * Errori imprevisti (database, rete): diventano un messaggio nel form, che così conserva i dati inseriti,
+ * invece di sostituire la pagina con la schermata di errore. redirect() e notFound() passano invariati.
+ */
+async function guarded(run: () => Promise<ActionResult>): Promise<ActionResult> {
+  try {
+    return await run();
+  } catch (err) {
+    unstable_rethrow(err);
+    console.error("[richieste] errore imprevisto in una server action", err);
+    return fail("Errore imprevisto: l'operazione non è stata completata. Riprova tra qualche istante.");
+  }
 }
 
 function text(formData: FormData, name: string): string {
@@ -67,20 +82,26 @@ export async function createRequestAction(_prev: State, formData: FormData): Pro
   if (!input) return fail("Elenco prodotti non valido: ricarica la pagina e riprova.");
 
   const sendToWarehouse = text(formData, "intent") === "send";
-  const res = await createRequest(user, input, { sendToWarehouse });
-  if (!res.ok) return res;
-  const id = res.data?.id;
-  revalidatePath("/", "layout");
-  if (!id) return { ok: true, message: res.message };
+  return guarded(async () => {
+    const res = await createRequest(user, input, { sendToWarehouse });
+    if (!res.ok) return res;
+    const id = res.data?.id;
+    revalidatePath("/", "layout");
+    if (!id) return { ok: true, message: res.message };
 
-  let ok = "creata";
-  if (sendToWarehouse) {
-    const snapshot = await getWorkflowSnapshot(id);
-    ok = snapshot && snapshot.status !== "NUOVA" ? "inviata" : "non-inviata";
-  }
-  redirect(`/richieste/${id}?ok=${ok}`);
+    let ok = "creata";
+    if (sendToWarehouse) {
+      const snapshot = await getWorkflowSnapshot(id);
+      ok = snapshot && snapshot.status !== "NUOVA" ? "inviata" : "non-inviata";
+    }
+    redirect(`/richieste/${id}?ok=${ok}`);
+  });
 }
 
+/**
+ * Modifica dei dati della richiesta. Con intent=send («Salva e invia al magazzino», solo per le nuove)
+ * dopo il salvataggio la richiesta passa a «In preparazione», come nella creazione.
+ */
 export async function updateRequestAction(id: number, _prev: State, formData: FormData): Promise<ActionResult> {
   const user = await getAuthorizedUser("requests.manage");
   if (!user) return NOT_AUTHORIZED;
@@ -88,9 +109,22 @@ export async function updateRequestAction(id: number, _prev: State, formData: Fo
   const input = readRequestInfo(formData);
   if (!input) return fail("Elenco prodotti non valido: ricarica la pagina e riprova.");
 
-  const res = await updateRequestInfo(user, id, input);
-  if (res.ok) revalidatePath("/", "layout");
-  return res;
+  return guarded(async () => {
+    const res = await updateRequestInfo(user, id, input);
+    if (!res.ok) return res;
+    revalidatePath("/", "layout");
+    if (text(formData, "intent") !== "send") return res;
+
+    const sent = await advanceStatus(user, id, "IN_PREPARAZIONE");
+    if (!sent.ok) {
+      return {
+        ok: true,
+        message: `Modifiche salvate. Attenzione: la richiesta non è stata inviata al magazzino (${sent.error})`,
+      };
+    }
+    revalidatePath("/", "layout");
+    redirect(`/richieste/${id}?ok=inviata`);
+  });
 }
 
 /** «Invia al magazzino»: Nuova richiesta → In preparazione (parte l'avviso email al magazzino). */
@@ -99,11 +133,13 @@ export async function sendToWarehouseAction(id: number, _prev: State, _formData:
   const user = await getAuthorizedUser("requests.manage");
   if (!user) return NOT_AUTHORIZED;
   if (!validId(id)) return INVALID_ID;
-  const res = await advanceStatus(user, id, "IN_PREPARAZIONE");
-  if (!res.ok) return res;
-  revalidatePath("/", "layout");
-  // Il pulsante sparisce col cambio di stato: l'esito (anche dell'email) si mostra come avviso nella pagina.
-  redirect(`/richieste/${id}?ok=inviata`);
+  return guarded(async () => {
+    const res = await advanceStatus(user, id, "IN_PREPARAZIONE");
+    if (!res.ok) return res;
+    revalidatePath("/", "layout");
+    // Il pulsante sparisce col cambio di stato: l'esito (anche dell'email) si mostra come avviso nella pagina.
+    redirect(`/richieste/${id}?ok=inviata`);
+  });
 }
 
 export async function deleteRequestAction(id: number, _prev: State, _formData: FormData): Promise<ActionResult> {
@@ -111,10 +147,12 @@ export async function deleteRequestAction(id: number, _prev: State, _formData: F
   const user = await getAuthorizedUser("requests.manage");
   if (!user) return NOT_AUTHORIZED;
   if (!validId(id)) return INVALID_ID;
-  const res = await deleteRequest(user, id);
-  if (!res.ok) return res;
-  revalidatePath("/", "layout");
-  redirect(`/richieste?eliminata=${id}`);
+  return guarded(async () => {
+    const res = await deleteRequest(user, id);
+    if (!res.ok) return res;
+    revalidatePath("/", "layout");
+    redirect(`/richieste?eliminata=${id}`);
+  });
 }
 
 /** Correzione: riporta la richiesta allo stato precedente, con motivo obbligatorio. */
@@ -124,8 +162,10 @@ export async function revertRequestAction(id: number, _prev: State, formData: Fo
   if (!validId(id)) return INVALID_ID;
   const note = text(formData, "note").trim().slice(0, 1000);
   if (!note) return fail("Indica il motivo della correzione.", { note: "Indica il motivo" });
-  const res = await revertStatus(user, id, note);
-  if (!res.ok) return res;
-  revalidatePath("/", "layout");
-  redirect(`/richieste/${id}?ok=riportata`);
+  return guarded(async () => {
+    const res = await revertStatus(user, id, note);
+    if (!res.ok) return res;
+    revalidatePath("/", "layout");
+    redirect(`/richieste/${id}?ok=riportata`);
+  });
 }

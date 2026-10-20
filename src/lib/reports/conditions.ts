@@ -1,11 +1,16 @@
 import "server-only";
-import { and, gte, inArray, lte, sql, type SQL } from "drizzle-orm";
-import { sampleRequests, type RequestStatus } from "@/db/schema";
+import { and, inArray, sql, type SQL } from "drizzle-orm";
+import { sampleRequests } from "@/db/schema";
 import { TIME_ZONE } from "@/lib/format";
+import { SHIPPED_STATUSES } from "@/lib/status";
 import { addDays } from "./period";
 
-/** Stati in cui una richiesta conta come spedita (e i suoi m² entrano nei report). */
-export const SHIPPED_STATUSES: RequestStatus[] = ["SPEDITA", "COMPLETATA"];
+/**
+ * Data di spedizione "effettiva" di una richiesta partita: la data di spedizione se inserita,
+ * altrimenti la data di ritiro del corriere (obbligatoria per «Spedita»; nel blueprint la data
+ * di spedizione è proprio "la data in cui il corriere ritira"). Vale solo per Spedita/Completata.
+ */
+export const effectiveShipmentDate = sql<string | null>`coalesce(${sampleRequests.shipmentDate}, ${sampleRequests.pickupDate})`;
 
 /** Mezzanotte (fuso di Roma) del giorno ISO, come timestamptz. */
 export function romeDayStart(iso: string): SQL {
@@ -17,11 +22,10 @@ export function receivedBetween(da: string, a: string): SQL {
   return sql`(${sampleRequests.receivedAt} >= ${romeDayStart(da)} and ${sampleRequests.receivedAt} < ${romeDayStart(addDays(a, 1))})`;
 }
 
-/** Richiesta spedita (Spedita o Completata) con data di spedizione tra `da` e `a` inclusi. */
+/** Richiesta spedita (Spedita o Completata) con data di spedizione effettiva tra `da` e `a` inclusi. */
 export function shippedBetween(da: string, a: string): SQL {
   return and(
     inArray(sampleRequests.status, SHIPPED_STATUSES),
-    gte(sampleRequests.shipmentDate, da),
-    lte(sampleRequests.shipmentDate, a),
+    sql`${effectiveShipmentDate} between ${da}::date and ${a}::date`,
   )!;
 }

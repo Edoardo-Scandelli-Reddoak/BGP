@@ -1,18 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
 import type { ActionResult } from "@/lib/action-result";
+import { getClientIp } from "@/lib/request-ip";
 import { createPublicRequest, type PublicRequestResult } from "@/lib/requests/public";
 
 const MAX_ITEMS_JSON = 20_000;
-
-/** IP del visitatore: primo indirizzo di x-forwarded-for, altrimenti x-real-ip. */
-async function clientIp(): Promise<string | null> {
-  const h = await headers();
-  const forwarded = h.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || h.get("x-real-ip")?.trim() || null;
-}
 
 function parseItems(value: FormDataEntryValue | null): unknown {
   if (typeof value !== "string" || value.length > MAX_ITEMS_JSON) return [];
@@ -47,8 +40,10 @@ export async function submitPublicRequest(
       items: parseItems(fd.get("items")),
       consent: fd.get("consent") === "on",
       website: text("website"),
+      formToken: text("formToken"),
     },
-    await clientIp(),
+    // IP solo da un proxy fidato (TRUST_PROXY), altrimenti null: valgono i limiti per email e totali.
+    await getClientIp(),
   );
   if (result.ok && result.data?.code) revalidatePath("/", "layout");
   return result;

@@ -3,8 +3,9 @@ import type { OpenListRow } from "@/app/(app)/richieste/list-query";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { cn } from "@/components/ui/cn";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import { formatDate, requestCode } from "@/lib/format";
-import { ageLabel, daysSince, shortAddress } from "./utils";
+import { daysSince, formatDate, requestCode } from "@/lib/format";
+import { bollaSatisfied } from "@/lib/requests/workflow";
+import { ageLabel, shortAddress } from "./utils";
 
 /** Oltre questa soglia una richiesta ancora «Nuova» viene evidenziata. */
 const STALE_DAYS = 3;
@@ -41,16 +42,18 @@ function SourceBadges({ row }: { row: OpenListRow }) {
   );
 }
 
+/** Stessa regola della logistica: bolla pronta se segnata pronta, con numero DDT o con il DDT caricato. */
 function BollaBadge({ row }: { row: OpenListRow }) {
   if (!row.deliveryFormRequired) return null;
-  return <Badge tone={row.deliveryFormReady ? "green" : "amber"}>{row.deliveryFormReady ? "Bolla pronta" : "Bolla"}</Badge>;
+  const ready = bollaSatisfied({ ...row, hasDdtAttachment: row.hasDdt });
+  return <Badge tone={ready ? "green" : "amber"}>{ready ? "Bolla pronta" : "Bolla da preparare"}</Badge>;
 }
 
 function Received({ row, days }: { row: OpenListRow; days: number }) {
   const stale = isStale(row, days);
   return (
-    <span className="whitespace-nowrap">
-      <span className="block text-slate-900">{formatDate(row.receivedAt)}</span>
+    <span>
+      <span className="block whitespace-nowrap text-slate-900">{formatDate(row.receivedAt)}</span>
       <span className={cn("block text-xs", stale ? "font-semibold text-red-700" : "text-slate-500")}>
         {ageLabel(days)}
         {stale ? " · in attesa" : ""}
@@ -59,7 +62,10 @@ function Received({ row, days }: { row: OpenListRow; days: number }) {
   );
 }
 
-/** Elenco richieste aperte: tabella su schermi larghi, schede su telefono. */
+/**
+ * Elenco richieste aperte: tabella su schermi larghi, schede su telefono.
+ * La bolla sta sotto lo stato (una colonna in meno): con la barra laterale la tabella entra in 960px.
+ */
 export function RequestList({ rows }: { rows: OpenListRow[] }) {
   const withAge = rows.map((row) => ({ row, days: daysSince(row.receivedAt) }));
   return (
@@ -74,14 +80,13 @@ export function RequestList({ rows }: { rows: OpenListRow[] }) {
               <TH>Prodotti</TH>
               <TH>Destinazione</TH>
               <TH>Stato</TH>
-              <TH>Bolla</TH>
               <TH>Origine</TH>
             </tr>
           </THead>
           <TBody>
             {withAge.map(({ row, days }) => (
               <TR key={row.id} className={cn(isStale(row, days) && "bg-red-50/40")}>
-                <TD>
+                <TD className="whitespace-nowrap">
                   <Link
                     href={`/richieste/${row.id}`}
                     className="font-mono text-sm font-semibold text-brand-700 hover:text-brand-900 hover:underline"
@@ -103,10 +108,10 @@ export function RequestList({ rows }: { rows: OpenListRow[] }) {
                   <span title={row.destinationAddress}>{shortAddress(row.destinationAddress) || "—"}</span>
                 </TD>
                 <TD>
-                  <StatusBadge status={row.status} />
-                </TD>
-                <TD>
-                  <BollaBadge row={row} />
+                  <span className="flex flex-col items-start gap-1">
+                    <StatusBadge status={row.status} />
+                    <BollaBadge row={row} />
+                  </span>
                 </TD>
                 <TD>
                   <SourceBadges row={row} />

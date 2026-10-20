@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { emailLog, emailTemplates, type EmailKind, type Language } from "@/db/schema";
+import { emailLog, emailTemplates, type ContactType, type EmailKind, type Language } from "@/db/schema";
 import { formatDate, formatNumber, requestCode } from "@/lib/format";
 import { generateBollaPdf } from "@/lib/pdf/bolla";
 import { getAttachmentFile, getRequestDetail, type RequestDetail } from "@/lib/requests/queries";
@@ -18,7 +18,8 @@ import {
   type TemplateVars,
 } from "./templates";
 
-const SIGNATURE_CID = "firma-bgp";
+/** Content-ID dell'immagine della firma nelle email HTML. */
+export const SIGNATURE_CID = "firma-bgp";
 
 export function appUrl(): string {
   return (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -90,14 +91,38 @@ export async function loadTemplate(kind: Exclude<EmailKind, "TEST">, lang: Langu
   return DEFAULT_TEMPLATES[kind].it!;
 }
 
-async function signatureAttachment(settings: AppSettings): Promise<OutgoingAttachment | null> {
-  if (!settings.mailSignatureImage) return null;
+/** Immagine della firma BGP (banner dei marchi) come allegato inline, o null se il file manca. */
+export async function signatureImageAttachment(): Promise<OutgoingAttachment | null> {
   try {
     const content = await readFile(path.join(process.cwd(), "public", "email", "firma-bgp.png"));
     return { filename: "firma-bgp.png", content, contentType: "image/png", cid: SIGNATURE_CID };
   } catch {
     return null;
   }
+}
+
+async function signatureAttachment(settings: AppSettings): Promise<OutgoingAttachment | null> {
+  return settings.mailSignatureImage ? signatureImageAttachment() : null;
+}
+
+type ConfirmationContact = {
+  email: string | null;
+  type: ContactType;
+  agent: { email: string | null } | null;
+};
+
+/**
+ * Destinatari della conferma di spedizione: gli indirizzi del contatto; l'agente in copia solo
+ * se il contatto è un cliente, senza ripetere gli indirizzi già tra i destinatari.
+ */
+export function confirmationRecipients(contact: ConfirmationContact): { to: string[]; cc: string[] } {
+  const to = parseEmailList(contact.email);
+  const toKeys = new Set(to.map((e) => e.toLowerCase()));
+  const cc =
+    contact.type === "CLIENTE" && contact.agent
+      ? parseEmailList(contact.agent.email).filter((e) => !toKeys.has(e.toLowerCase()))
+      : [];
+  return { to, cc };
 }
 
 /** File da allegare alla conferma di spedizione: DDT caricato, altrimenti la bolla generata se richiesta. */
@@ -148,12 +173,7 @@ export async function sendRequestNotification(
 
   if (kind === "CONFERMA_SPEDIZIONE") {
     lang = detail.contact.language;
-    to = parseEmailList(detail.contact.email);
-    const toKeys = new Set(to.map((e) => e.toLowerCase()));
-    cc =
-      detail.contact.type === "CLIENTE" && detail.contact.agent
-        ? parseEmailList(detail.contact.agent.email).filter((e) => !toKeys.has(e.toLowerCase()))
-        : [];
+    ({ to, cc } = confirmationRecipients(detail.contact));
     bcc = parseEmailList(settings.shipmentBcc);
     attachments = await shipmentAttachments(detail, settings);
   } else if (kind === "AVVISO_MAGAZZINO") {

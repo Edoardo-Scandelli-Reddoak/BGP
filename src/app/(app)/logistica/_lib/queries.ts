@@ -12,6 +12,7 @@ import {
   statusEvents,
   type RequestStatus,
 } from "@/db/schema";
+import { bollaSatisfied } from "@/lib/requests/workflow";
 
 /** Esiste un DDT caricato per la richiesta (sottoquery correlata, senza leggere il file). */
 const hasDdtSql = sql<boolean>`exists (select 1 from ${attachments} where ${attachments.requestId} = ${sampleRequests.id} and ${attachments.kind} = 'DDT')`;
@@ -27,7 +28,7 @@ const LIST_LIMIT = 200;
 
 /** Vista «Pronte per il ritiro»: dalla più vecchia. */
 export async function listReadyForPickup() {
-  return db
+  const rows = await db
     .select({
       id: sampleRequests.id,
       receivedAt: sampleRequests.receivedAt,
@@ -50,6 +51,8 @@ export async function listReadyForPickup() {
     .where(eq(sampleRequests.status, "PRONTA_RITIRO"))
     .orderBy(asc(sampleRequests.receivedAt), asc(sampleRequests.id))
     .limit(LIST_LIMIT);
+  // Stessa regola del flusso: bolla pronta se spuntata, con numero DDT o con il DDT caricato.
+  return rows.map((r) => ({ ...r, bollaReady: bollaSatisfied({ ...r, hasDdtAttachment: r.hasDdt }) }));
 }
 
 export type ReadyForPickupRow = Awaited<ReturnType<typeof listReadyForPickup>>[number];
@@ -87,7 +90,7 @@ export async function listDeliveryForms() {
       totalM2: r.pieces.reduce((sum, p) => sum + Number(p.areaM2 || 0), 0),
       piecesCount: r.pieces.reduce((sum, p) => sum + p.quantity, 0),
       ddtAttachment,
-      bollaReady: r.deliveryFormReady || Boolean(r.ddtNumber?.trim()) || ddtAttachment !== null,
+      bollaReady: bollaSatisfied({ ...r, hasDdtAttachment: ddtAttachment !== null }),
     };
   });
 }

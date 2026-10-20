@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { RequestStatus } from "@/db/schema";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody } from "@/components/ui/card";
@@ -15,11 +16,32 @@ import { can } from "@/lib/roles";
 import { nextStatus, STATUS_OWNER, STATUS_TODO } from "@/lib/status";
 import { SendToWarehouseForm } from "./request-actions";
 import { ownerLabel } from "./status-stepper";
+import { CONTACT_REVIEW_CONFIRM } from "./utils";
 
 const PANEL_HINT: Partial<Record<RequestStatus, string>> = {
   IN_PREPARAZIONE: "Il pulsante si trova nel pannello del magazzino.",
   PRONTA_RITIRO: "Il pulsante si trova nel pannello della spedizione.",
 };
+
+/** Contatto creato dal modulo pubblico e non ancora verificato: avviso (non blocca l'invio). */
+function ContactReviewNote({ href, children }: { href: string | null; children: string }) {
+  return (
+    <div className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
+      <p className="font-medium">Contatto da verificare</p>
+      <p className="mt-0.5">
+        {children}
+        {href ? (
+          <>
+            {" "}
+            <Link href={href} className="font-semibold underline underline-offset-2">
+              Apri la scheda del contatto
+            </Link>
+          </>
+        ) : null}
+      </p>
+    </div>
+  );
+}
 
 function ProblemList({ title, problems }: { title: string; problems: string[] }) {
   return (
@@ -41,12 +63,18 @@ export function NextStepCard({
   completedAt,
   snapshot,
   user,
+  contactNeedsReview = false,
+  contactHref = null,
 }: {
   requestId: number;
   status: RequestStatus;
   completedAt: Date | null;
   snapshot: WorkflowSnapshot;
   user: SessionUser;
+  /** Contatto creato dal modulo pubblico e non ancora verificato in anagrafica. */
+  contactNeedsReview?: boolean;
+  /** Scheda anagrafica del contatto, se l'utente può aprirla. */
+  contactHref?: string | null;
 }) {
   const next = nextStatus(status);
   const permission = transitionPermission(status);
@@ -58,6 +86,7 @@ export function NextStepCard({
   // «Tocca a te» solo per il ruolo responsabile del passo (il back office può comunque sostituirsi).
   const yourTurn = STATUS_OWNER[status] === user.role || (status === "NUOVA" && can(user.role, "requests.manage"));
   const label = ADVANCE_LABELS[status];
+  const reviewBeforeSend = status === "NUOVA" && contactNeedsReview;
 
   if (status === "COMPLETATA") {
     return (
@@ -90,14 +119,24 @@ export function NextStepCard({
         {canAdvance && label ? (
           problems.length > 0 ? (
             <ProblemList title={`Per «${label}» manca ancora:`} problems={problems} />
-          ) : (
+          ) : reviewBeforeSend ? null : (
             <p className="rounded-lg bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900 ring-1 ring-inset ring-emerald-200">
               Tutto pronto per «{label}».
             </p>
           )
         ) : null}
+        {canAdvance && reviewBeforeSend ? (
+          <ContactReviewNote href={contactHref}>
+            Contatto da verificare: controllalo in anagrafica (lingua, email, agente) prima di inviare.
+          </ContactReviewNote>
+        ) : null}
         {canAdvance && PANEL_HINT[status] ? <p className="text-xs text-slate-500">{PANEL_HINT[status]}</p> : null}
 
+        {followsShipment && contactNeedsReview ? (
+          <ContactReviewNote href={contactHref}>
+            Il contatto non è ancora stato verificato: controlla lingua, email e agente prima della conferma al cliente.
+          </ContactReviewNote>
+        ) : null}
         {followsShipment ? (
           <p className="text-xs text-slate-500">
             {shipmentProblems.length > 0
@@ -107,7 +146,11 @@ export function NextStepCard({
         ) : null}
 
         {status === "NUOVA" && can(user.role, "requests.manage") ? (
-          <SendToWarehouseForm requestId={requestId} blocked={problems.length > 0} />
+          <SendToWarehouseForm
+            requestId={requestId}
+            blocked={problems.length > 0}
+            confirmMessage={reviewBeforeSend ? CONTACT_REVIEW_CONFIRM : undefined}
+          />
         ) : null}
 
         {!canAct ? (

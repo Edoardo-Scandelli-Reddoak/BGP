@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import { PublicRequestSection } from "@/components/pubblico/public-request-form";
-import { PUBLIC_MAX_PRODUCTS, PUBLIC_MAX_QUANTITY } from "@/lib/requests/public";
+import { issuePublicFormToken, PUBLIC_MAX_PRODUCTS, PUBLIC_MAX_QUANTITY } from "@/lib/requests/public";
 import { getSettings } from "@/lib/settings";
 
 export const metadata: Metadata = {
@@ -39,7 +39,12 @@ export default async function PublicRequestPage() {
           </p>
         ))}
       </div>
-      <PublicRequestSection maxProducts={PUBLIC_MAX_PRODUCTS} maxQuantity={PUBLIC_MAX_QUANTITY} />
+      {/* Il gettone firmato registra quando è stata aperta la pagina (invii troppo rapidi = bot). */}
+      <PublicRequestSection
+        maxProducts={PUBLIC_MAX_PRODUCTS}
+        maxQuantity={PUBLIC_MAX_QUANTITY}
+        formToken={issuePublicFormToken()}
+      />
     </>
   );
 }

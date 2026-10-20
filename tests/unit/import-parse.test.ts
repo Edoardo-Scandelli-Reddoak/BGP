@@ -142,12 +142,17 @@ describe("parseContactRows — clienti", () => {
     expect(c?.country).toBeNull();
   });
 
-  it("lingua: Italiano/English/Français/Deutsch, mancante → italiano", () => {
+  it("lingua: Italiano/English/Français/Deutsch; mancante → null (decide l'import, da verificare)", () => {
     expect(byName("CORVINO SRL")?.language).toBe("it");
     expect(byName("ATLAS NOVEN TRADING INTERNATIONAL")?.language).toBe("en");
     expect(byName("UNION DECORS SAS")?.language).toBe("fr");
     expect(byName("KMB HANDELS GMBH")?.language).toBe("de");
-    expect(byName("LA PINETA di Gallo Paolo & C. SAS")?.language).toBe("it");
+    expect(byName("LA PINETA di Gallo Paolo & C. SAS")).toMatchObject({ language: null, languageRaw: "" });
+  });
+
+  it("numero di riga del file e paese ricavato dall'indirizzo", () => {
+    expect(byName("CORVINO SRL")).toMatchObject({ row: 3, country: "Italia", countryDerived: true });
+    expect(byName("K.L.M. LTD")).toMatchObject({ row: 9, country: null, countryDerived: true });
   });
 
   it("cliente senza agente = cliente direzionale (agentKey null)", () => {
@@ -178,6 +183,7 @@ describe("parseContactRows — agenti", () => {
       key: "email:info@lombardiagenzie.example",
       name: "LOMBARDI S.N.C. DI P. E F. LOMBARDI",
       email: "info@lombardiagenzie.example",
+      row: 2,
     });
   });
 
@@ -220,11 +226,17 @@ describe("parseContactRows — intestazioni alternative", () => {
       email: "studio@bianchi.ch",
       defaultAddress: "Via Centrale 31, 6928 Manno",
       country: "Svizzera",
+      countryDerived: false,
       language: "de",
       phone: "+41 91 000 00 00",
       agentKey: "email:info@alpicem.example",
     });
-    expect(agents).toEqual([{ key: "email:info@alpicem.example", name: "Alpicem Sagl", email: "info@alpicem.example" }]);
+    expect(agents).toEqual([{ key: "email:info@alpicem.example", name: "Alpicem Sagl", email: "info@alpicem.example", row: 2 }]);
+  });
+
+  it("lingua non riconosciuta → null con il valore originale", () => {
+    const { customers } = parseContactRows([{ Name: "Ditta ES", Language: "Español" }]);
+    expect(customers.rows[0]).toMatchObject({ language: null, languageRaw: "Español" });
   });
 
   it("valori di cella exceljs con { text }", () => {
@@ -253,12 +265,40 @@ describe("helper di normalizzazione", () => {
     expect(cleanAddress(null)).toBeNull();
   });
 
-  it("countryFromAddress", () => {
+  it("countryFromAddress: Italia solo con sigla di provincia italiana e CAP a 5 cifre", () => {
     expect(countryFromAddress("VIA ROSSINI 33, 17028 SPOTORNO (SV)")).toBe("Italia");
     expect(countryFromAddress("VIA ROSSINI 33, 17028 SPOTORNO (SV)  ")).toBe("Italia");
+    // (CH) è anche Chieti: con CAP a 5 cifre resta Italia
+    expect(countryFromAddress("VIA TRONTO 108, 66020 SAN GIOVANNI TEATINO (CH)")).toBe("Italia");
+    // CAP segnaposto 00000 con sigla di provincia: resta Italia
+    expect(countryFromAddress("VIA DEL CASALE DI ROCCANOVA 108, 00000 ROMA (RM)")).toBe("Italia");
     expect(countryFromAddress("QUAI JEAN - CHARLES LEROY 32, 98000 MONACO ()")).toBeNull();
     expect(countryFromAddress("14 AVENUE DE VERDUN, 06230 SAINT JEAN CAP FERRAT")).toBeNull();
     expect(countryFromAddress(null)).toBeNull();
+  });
+
+  it("countryFromAddress: sigle estere del file BGP", () => {
+    // (EE) = Escursionisti Esteri: mai Italia, anche con CAP a 5 cifre
+    expect(countryFromAddress("BAGDAT CAD 120, 34744 ISTANBUL (EE)")).toBeNull();
+    expect(countryFromAddress("Suite 210, ground floor, Harbour Building,, 00000 Belize city (EE)")).toBeNull();
+    expect(countryFromAddress("DRAZICE GORNJI 17 22B, 51218 DRAZICE (HR)")).toBe("Croazia");
+    expect(countryFromAddress("ISTARSKA 32, 09010 PULA (HR)")).toBe("Croazia");
+    expect(countryFromAddress("VIA 5 FEBBRAIO 77, 47899 SERRAVALLE (SM)")).toBe("San Marino");
+    expect(countryFromAddress("SEESTRASSE 17, 2558 AEGERTEN (CH)")).toBe("Svizzera");
+    expect(countryFromAddress("VIA VELA 12, 6830 CHIASSO (TI)")).toBe("Svizzera");
+    expect(countryFromAddress("BLUMENSTRASSE 22, 8330 PAEFFIKON (ZH) ()")).toBe("Svizzera");
+    // sigla di una provincia italiana ma CAP non italiano (Slovenia, Bosnia)
+    expect(countryFromAddress("PODGORJE 43 A, 6273 MAREZIGE (SI)")).toBeNull();
+    expect(countryFromAddress("POLJE BB, 8500 GORNJE POLJE (MO)")).toBeNull();
+    // sigla che non è una provincia italiana
+    expect(countryFromAddress("AN DER LINDE 7, 60388 FRANCOFORTE (DE)")).toBeNull();
+  });
+
+  it("countryFromAddress: provincia vuota «()» → Italia solo con via italiana, CAP a 5 cifre e lingua italiana", () => {
+    expect(countryFromAddress("VIA DEI MILLE, 12, 80121 NAPOLI ()")).toBe("Italia");
+    expect(countryFromAddress("VIA DEI MILLE, 12, 80121 NAPOLI ()", "it")).toBe("Italia");
+    expect(countryFromAddress("VIA RIPENDA 214, 52220 LABIN ()", "en")).toBeNull();
+    expect(countryFromAddress("VIA CENTRALE 36, 6928 MANNO ()")).toBeNull();
   });
 
   it("normalizeEmails", () => {
@@ -289,8 +329,15 @@ describe("parseProductRows", () => {
       {
         code: "10120D001",
         description: "Pavimento in legno 2 strati in essenza Doussié, finitura vernice UV NEUTRO , misura 10/4x120x600/1500mm",
+        brand: null,
+        category: null,
       },
-      { code: "10120D001ITA", description: "0 Doussie 2 strati verniciato liscio AB 10x120 mm M/F, spigolo vivo" },
+      {
+        code: "10120D001ITA",
+        description: "0 Doussie 2 strati verniciato liscio AB 10x120 mm M/F, spigolo vivo",
+        brand: null,
+        category: null,
+      },
     ]);
   });
 
@@ -300,15 +347,26 @@ describe("parseProductRows", () => {
       { Codice_articolo: "", Descrizione_articolo_estesa: "" },
       { Codice_articolo: "X1", Descrizione_articolo_estesa: "" },
     ]);
-    expect(rows).toEqual([{ code: "X1", description: "" }]);
+    expect(rows).toEqual([{ code: "X1", description: "", brand: null, category: null }]);
     expect(skipped).toEqual([{ row: 2, reason: "Codice articolo mancante" }]);
   });
 
   it("codici numerici e intestazioni alternative", () => {
     const { rows } = parseProductRows([{ Codice: 12345, Descrizione: "Rovere" }, { SKU: "AB-1", Description: "Noce" }]);
     expect(rows).toEqual([
-      { code: "12345", description: "Rovere" },
-      { code: "AB-1", description: "Noce" },
+      { code: "12345", description: "Rovere", brand: null, category: null },
+      { code: "AB-1", description: "Noce", brand: null, category: null },
+    ]);
+  });
+
+  it("colonne facoltative Marchio e Categoria (vuote → null)", () => {
+    const { rows } = parseProductRows([
+      { Codice_articolo: "10150E1", Descrizione_articolo_estesa: "Rovere Essence", Marchio: " Gaia  Parquet ", Categoria: "Prefinito" },
+      { Codice: "AB-1", Descrizione: "Noce", Brand: "", Category: "" },
+    ]);
+    expect(rows).toEqual([
+      { code: "10150E1", description: "Rovere Essence", brand: "Gaia Parquet", category: "Prefinito" },
+      { code: "AB-1", description: "Noce", brand: null, category: null },
     ]);
   });
 
@@ -318,7 +376,7 @@ describe("parseProductRows", () => {
       { Codice_articolo: "10120d001", Descrizione_articolo_estesa: "Seconda descrizione" },
     ]);
     expect(skipped).toEqual([{ row: 3, reason: "Codice duplicato 10120d001" }]);
-    expect(rows).toEqual([{ code: "10120D001", description: "Prima descrizione" }]);
+    expect(rows).toEqual([{ code: "10120D001", description: "Prima descrizione", brand: null, category: null }]);
   });
 });
 

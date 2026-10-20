@@ -9,7 +9,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { formatBytes } from "@/components/logistica/utils";
 import { requireUser } from "@/lib/auth/session";
 import { parseEmailList } from "@/lib/email/recipients";
-import { formatDate, formatKg, formatM2, formatNumber, LANGUAGE_LABELS, requestCode } from "@/lib/format";
+import { formatCm, formatDate, formatKg, formatM2, formatNumber, LANGUAGE_LABELS, requestCode } from "@/lib/format";
 import { listDeliveryForms, type DeliveryFormRow } from "../_lib/queries";
 
 export const metadata: Metadata = { title: "Bolle da preparare" };
@@ -182,7 +182,7 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
                 <TR key={p.id}>
                   <TD className="font-mono text-xs whitespace-nowrap">{p.product.code}</TD>
                   <TD className="text-right whitespace-nowrap tabular-nums">
-                    {formatNumber(p.lengthCm, 1)} × {formatNumber(p.widthCm, 1)} cm
+                    {formatCm(p.lengthCm)} × {formatCm(p.widthCm)} cm
                   </TD>
                   <TD className="text-right tabular-nums">{p.quantity}</TD>
                   <TD className="text-right whitespace-nowrap tabular-nums">{formatNumber(p.areaM2, 2)}</TD>

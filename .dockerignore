@@ -1,7 +1,11 @@
 node_modules
 .next
 .git
-.env
-.env.local
 coverage
 *.log
+*.tsbuildinfo
+# Nessun file di configurazione con segreti nel contesto di build (né quindi nell'immagine):
+# le variabili si passano solo all'avvio del container (--env-file o segreti dell'orchestratore).
+.env*
+!.env.example
+*.pem

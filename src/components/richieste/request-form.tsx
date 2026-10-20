@@ -11,6 +11,7 @@ import { Checkbox, Field, Input, Textarea } from "@/components/ui/form";
 import type { ActionResult } from "@/lib/action-result";
 import { ContactSummary } from "./contact-summary";
 import { ItemsEditor, ItemsReadOnly, itemsToPayload, type ItemRow } from "./items-editor";
+import { CONTACT_REVIEW_CONFIRM } from "./utils";
 
 export type FormContact = ContactOption & { phone?: string | null; company?: string | null; active?: boolean };
 
@@ -25,6 +26,15 @@ export type RequestFormInitial = {
 };
 
 type State = ActionResult | null;
+
+const NO_KEYS: ReadonlySet<string> = new Set();
+
+/** Una chiave d'errore è nascosta se il campo è stato modificato; "items." copre tutte le righe, "items.2." una sola. */
+function isDismissed(key: string, dismissed: ReadonlySet<string>): boolean {
+  if (dismissed.has(key)) return true;
+  for (const d of dismissed) if (d.endsWith(".") && key.startsWith(d)) return true;
+  return false;
+}
 
 function addressFor(c: FormContact): string {
   return [c.name, c.defaultAddress?.trim()].filter(Boolean).join("\n");
@@ -55,6 +65,7 @@ export function RequestForm({
   itemsEditable = true,
   itemsLockedReason,
   newContactHref,
+  canSendToWarehouse = false,
   onCancel,
   onSaved,
 }: {
@@ -66,6 +77,8 @@ export function RequestForm({
   itemsEditable?: boolean;
   itemsLockedReason?: string;
   newContactHref?: string;
+  /** Solo in modifica: offre «Salva e invia al magazzino» (richiesta ancora nuova). */
+  canSendToWarehouse?: boolean;
   onCancel?: () => void;
   onSaved?: (message?: string) => void;
 }) {
@@ -86,13 +99,41 @@ export function RequestForm({
     if (res?.ok) onSaved?.(res.message);
     return res;
   }, null);
-  const errors = (state && !state.ok ? state.fieldErrors : undefined) ?? {};
+  // Gli errori del server restano finché il campo non viene corretto: modificandolo il messaggio sparisce.
+  const [dismissed, setDismissed] = useState<{ state: State; keys: ReadonlySet<string> }>({ state: null, keys: NO_KEYS });
+  const dismissedKeys = dismissed.state === state ? dismissed.keys : NO_KEYS;
+  const serverErrors = (state && !state.ok ? state.fieldErrors : undefined) ?? {};
+  const errors = Object.fromEntries(Object.entries(serverErrors).filter(([key]) => !isDismissed(key, dismissedKeys)));
+  const allFieldErrorsFixed =
+    Boolean(state && !state.ok && state.fieldErrors) && Object.keys(serverErrors).length > 0 && Object.keys(errors).length === 0;
+  const showSend = mode === "create" || canSendToWarehouse;
+
+  function dismiss(...keys: string[]) {
+    if (!state || state.ok) return;
+    setDismissed((d) => ({ state, keys: new Set([...(d.state === state ? d.keys : []), ...keys]) }));
+  }
+
+  function changeItems(next: ItemRow[]) {
+    const keys = ["items"];
+    // Righe aggiunte o tolte: gli indici cambiano, quindi si nascondono gli errori di tutte le righe.
+    if (next.length !== items.length) keys.push("items.");
+    else
+      next.forEach((row, i) => {
+        if (row !== items[i]) keys.push(`items.${i}.`);
+      });
+    dismiss(...keys);
+    setItems(next);
+  }
 
   function selectContact(c: ContactOption) {
     const next: FormContact = { ...c };
+    dismiss("contactId");
     setContact(next);
     const prefill = addressFor(next);
-    if (!destination.trim() || destination === autoAddress) setDestination(prefill);
+    if (!destination.trim() || destination === autoAddress) {
+      setDestination(prefill);
+      if (prefill.trim()) dismiss("destinationAddress");
+    }
     setAutoAddress(prefill);
   }
 
@@ -100,6 +141,7 @@ export function RequestForm({
     e.preventDefault();
     const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
     const nextIntent = submitter?.value === "send" ? "send" : "save";
+    if (nextIntent === "send" && contact?.needsReview && !window.confirm(CONTACT_REVIEW_CONFIRM)) return;
     const formData = new FormData(e.currentTarget);
     formData.set("intent", nextIntent);
     // In modifica la data di ricezione si invia solo se cambiata (altrimenti l'ora originale resta).
@@ -184,7 +226,7 @@ export function RequestForm({
         <fieldset className="space-y-3">
           <SectionTitle title="Prodotti richiesti" description="Uno o più prodotti, con la quantità di campioni per ciascuno." />
           {itemsEditable ? (
-            <ItemsEditor items={items} onChange={setItems} errors={errors} />
+            <ItemsEditor items={items} onChange={changeItems} errors={errors} />
           ) : (
             <ItemsReadOnly
               items={items}
@@ -212,7 +254,10 @@ export function RequestForm({
               maxLength={2000}
               value={destination}
               aria-invalid={errors.destinationAddress ? true : undefined}
-              onChange={(e) => setDestination(e.target.value)}
+              onChange={(e) => {
+                dismiss("destinationAddress");
+                setDestination(e.target.value);
+              }}
             />
           </Field>
           <Checkbox
@@ -229,7 +274,11 @@ export function RequestForm({
               rows={3}
               maxLength={5000}
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              aria-invalid={errors.notes ? true : undefined}
+              onChange={(e) => {
+                dismiss("notes");
+                setNotes(e.target.value);
+              }}
             />
           </Field>
           <Field
@@ -246,55 +295,49 @@ export function RequestForm({
               max={today}
               value={receivedDate}
               aria-invalid={errors.receivedAt ? true : undefined}
-              onChange={(e) => setReceivedDate(e.target.value)}
+              onChange={(e) => {
+                dismiss("receivedAt");
+                setReceivedDate(e.target.value);
+              }}
             />
           </Field>
         </fieldset>
       </div>
 
       <div className="space-y-3 border-t border-slate-100 pt-6">
-        <ActionMessage state={state} />
+        {allFieldErrorsFixed ? null : <ActionMessage state={state} />}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
-          {mode === "edit" ? (
-            <>
-              {onCancel ? (
-                <button type="button" className={buttonCls("ghost")} onClick={onCancel} disabled={pending}>
-                  Annulla
-                </button>
-              ) : null}
-              <button type="submit" name="intent" value="save" className={buttonCls("primary")} disabled={pending} aria-busy={pending}>
-                {pending ? <Spinner /> : null}
-                {pending ? "Salvataggio…" : "Salva modifiche"}
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="submit"
-                name="intent"
-                value="save"
-                className={buttonCls("secondary")}
-                disabled={pending}
-                aria-busy={pending && intent === "save"}
-              >
-                {pending && intent === "save" ? <Spinner /> : null}
-                Salva
-              </button>
-              <button
-                type="submit"
-                name="intent"
-                value="send"
-                className={buttonCls("primary")}
-                disabled={pending}
-                aria-busy={pending && intent === "send"}
-              >
-                {pending && intent === "send" ? <Spinner /> : null}
-                Salva e invia al magazzino
-              </button>
-            </>
-          )}
+          {mode === "edit" && onCancel ? (
+            <button type="button" className={buttonCls("ghost")} onClick={onCancel} disabled={pending}>
+              Annulla
+            </button>
+          ) : null}
+          <button
+            type="submit"
+            name="intent"
+            value="save"
+            className={buttonCls(showSend ? "secondary" : "primary")}
+            disabled={pending}
+            aria-busy={pending && intent === "save"}
+          >
+            {pending && intent === "save" ? <Spinner /> : null}
+            {mode === "edit" ? (pending && intent === "save" ? "Salvataggio…" : "Salva modifiche") : "Salva"}
+          </button>
+          {showSend ? (
+            <button
+              type="submit"
+              name="intent"
+              value="send"
+              className={buttonCls("primary")}
+              disabled={pending}
+              aria-busy={pending && intent === "send"}
+            >
+              {pending && intent === "send" ? <Spinner /> : null}
+              Salva e invia al magazzino
+            </button>
+          ) : null}
         </div>
-        {mode === "create" ? (
+        {showSend ? (
           <p className="text-right text-xs text-slate-500">
             «Salva e invia al magazzino» passa la richiesta a «In preparazione» e avvisa il magazzino via email.
           </p>

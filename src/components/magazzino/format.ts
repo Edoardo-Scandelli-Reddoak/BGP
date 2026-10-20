@@ -1,19 +1,4 @@
-import { dateFromIso, formatNumber, TIME_ZONE } from "@/lib/format";
-
-/** Misura in cm: senza decimali se intera ("122"), altrimenti una cifra ("19,5"). */
-export function formatCm(value: number): string {
-  return formatNumber(value, Number.isInteger(value) ? 0 : 1);
-}
-
-function romeDay(d: Date): number {
-  const iso = new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE }).format(d);
-  return Math.round(dateFromIso(iso).getTime() / 86_400_000);
-}
-
-/** Giorni di calendario (fuso di Roma) trascorsi da una data. */
-export function daysSince(date: Date, now: Date = new Date()): number {
-  return Math.max(0, romeDay(now) - romeDay(date));
-}
+/** Helper di visualizzazione della coda magazzino (formatCm e daysSince sono in @/lib/format). */
 
 /** Attesa in coda: "Arrivata oggi", "Da ieri", "Da 3 giorni". */
 export function waitingLabel(days: number): string {

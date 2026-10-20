@@ -29,7 +29,8 @@ export function StatusStepper({
 
   return (
     <nav aria-label="Avanzamento della richiesta">
-      <ol className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-5 sm:overflow-visible sm:pb-0">
+      {/* relative: il testo sr-only dei passi resta dentro l'area che scorre (niente scorrimento laterale della pagina) */}
+      <ol className="relative flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-5 sm:overflow-visible sm:pb-0">
         {STATUS_ORDER.map((s, i) => {
           const done = i < current || (i === current && s === "COMPLETATA");
           const isCurrent = i === current && !done;

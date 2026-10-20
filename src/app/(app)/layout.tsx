@@ -30,15 +30,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   );
 
   return (
-    <div className="min-h-screen lg:flex">
-      <aside className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col bg-brand-900 px-3 py-5">
-        <div className="mb-8 px-3">
+    <div className="min-h-dvh lg:flex">
+      <aside className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col bg-brand-900 px-3 py-4">
+        <div className="mb-5 px-3">
           <BrandMark inverted />
         </div>
-        <div className="flex-1 overflow-y-auto">
+        <div className="nav-scroll -mx-3 flex-1 overflow-y-auto px-3">
           <NavLinks sections={sections} counts={counts} />
         </div>
-        <div className="border-t border-white/10 pt-4">{footer}</div>
+        <div className="border-t border-white/10 pt-3">{footer}</div>
       </aside>
       <MobileNav sections={sections} counts={counts} footer={footer} />
       <main className="min-w-0 flex-1 lg:pl-64">

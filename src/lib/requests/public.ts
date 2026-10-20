@@ -1,5 +1,6 @@
 import "server-only";
-import { and, asc, count, eq, gte, ilike, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { and, asc, count, eq, gte, ilike, inArray, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db, type Tx } from "@/db";
 import {
@@ -17,18 +18,69 @@ import { isValidEmail, parseEmailList } from "@/lib/email/recipients";
 import { formatDate, LANGUAGE_LABELS, requestCode } from "@/lib/format";
 import { likePattern } from "@/lib/search";
 import { getSettings } from "@/lib/settings";
+import { dbId } from "@/lib/validation";
 
 /**
  * Richieste dal modulo pubblico /richiedi-campioni (senza login).
  * Riconosce agente e cliente dall'email, crea i contatti mancanti da verificare (needsReview)
  * e inserisce la richiesta in «Nuova richiesta». Nessuna email automatica in questa fase.
+ * Le differenze rispetto all'anagrafica (indirizzo, email del cliente) finiscono nelle note.
  */
 
 export const PUBLIC_MAX_PRODUCTS = 30;
 export const PUBLIC_MAX_QUANTITY = 20;
 const MAX_PER_IP_PER_HOUR = 5;
-const MAX_TOTAL_PER_HOUR = 100;
+const MAX_PER_EMAIL_PER_HOUR = 5;
+const MAX_TOTAL_PER_HOUR = 300;
 const HOUR_MS = 60 * 60 * 1000;
+
+/* ------------------------------------------------------------------ */
+/* Gettone firmato del modulo: invii troppo rapidi o senza pagina      */
+/* ------------------------------------------------------------------ */
+
+const FORM_TOKEN_MIN_AGE_MS = 3_000;
+const FORM_TOKEN_MAX_AGE_MS = 24 * HOUR_MS;
+
+/**
+ * Segreto per la firma: APP_SECRET, altrimenti derivato da DATABASE_URL (stabile tra i riavvii
+ * e tra più istanze, e non noto all'esterno). Solo in assenza di entrambi: casuale per processo.
+ */
+function formSecret(): string {
+  const configured = process.env.APP_SECRET?.trim();
+  if (configured) return configured;
+  const dbUrl = process.env.DATABASE_URL?.trim();
+  if (dbUrl) return createHash("sha256").update(`bgp-modulo-pubblico:${dbUrl}`).digest("hex");
+  const g = globalThis as unknown as { bgpPublicFormSecret?: string };
+  if (!g.bgpPublicFormSecret) g.bgpPublicFormSecret = randomBytes(32).toString("hex");
+  return g.bgpPublicFormSecret;
+}
+
+function signFormTimestamp(ts: string): string {
+  return createHmac("sha256", formSecret()).update(`richiedi-campioni:${ts}`).digest("base64url");
+}
+
+/** Gettone da inserire nel modulo (campo nascosto «formToken») al momento della visualizzazione. */
+export function issuePublicFormToken(now = Date.now()): string {
+  const ts = String(now);
+  return `${ts}.${signFormTimestamp(ts)}`;
+}
+
+type FormTokenCheck = "ok" | "invalid" | "bad-signature" | "too-fast" | "expired";
+
+function checkFormToken(token: unknown, now = Date.now()): FormTokenCheck {
+  if (typeof token !== "string") return "invalid";
+  const m = /^(\d{10,16})\.([A-Za-z0-9_-]{43})$/.exec(token);
+  if (!m) return "invalid";
+  const expected = Buffer.from(signFormTimestamp(m[1]));
+  const given = Buffer.from(m[2]);
+  // Firma non valida: può essere un modulo aperto prima di un cambio di APP_SECRET. Mai scartarlo
+  // in silenzio: l'utente riceve un errore e la pagina si aggiorna con un gettone nuovo.
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return "bad-signature";
+  const age = now - Number(m[1]);
+  if (age < FORM_TOKEN_MIN_AGE_MS) return "too-fast";
+  if (age > FORM_TOKEN_MAX_AGE_MS) return "expired";
+  return "ok";
+}
 
 const optionalText = (max: number) =>
   z
@@ -78,7 +130,7 @@ export const publicRequestInput = z.object({
   items: z
     .array(
       z.object({
-        productId: z.coerce.number().int().positive("Prodotto non valido"),
+        productId: dbId,
         quantity: z.coerce
           .number()
           .int("Quantità non valida")
@@ -91,6 +143,8 @@ export const publicRequestInput = z.object({
   consent: z.literal(true, { error: "Per inviare la richiesta devi acconsentire al trattamento dei dati" }),
   /** Campo trappola per i bot: invisibile alle persone, deve restare vuoto. */
   website: z.string().optional(),
+  /** Gettone firmato del modulo (issuePublicFormToken), controllato prima della validazione. */
+  formToken: z.string().optional(),
 });
 
 export type PublicRequestInput = z.input<typeof publicRequestInput>;
@@ -130,7 +184,14 @@ function emailListContains(address: string): SQL {
   )!;
 }
 
-type MatchedContact = { id: number; email: string | null; agentId: number | null; language: Language };
+type MatchedContact = {
+  id: number;
+  email: string | null;
+  agentId: number | null;
+  language: Language;
+  needsReview: boolean;
+  defaultAddress: string | null;
+};
 
 const matchColumns = {
   id: contacts.id,
@@ -138,6 +199,7 @@ const matchColumns = {
   agentId: contacts.agentId,
   language: contacts.language,
   needsReview: contacts.needsReview,
+  defaultAddress: contacts.defaultAddress,
 };
 
 async function findContactByEmail(
@@ -180,6 +242,25 @@ function mergeItems(items: { productId: number; quantity: number }[]) {
   return [...map.entries()].map(([productId, quantity]) => ({ productId, quantity }));
 }
 
+/** Indirizzo ridotto a lettere e cifre senza accenti, per confronti tolleranti sulla forma. */
+function addressKey(address: string): string {
+  return address
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+/** Stesso indirizzo, anche se uno dei due ha in più ragione sociale, paese o indicazioni. */
+function sameAddress(a: string, b: string): boolean {
+  const x = addressKey(a);
+  const y = addressKey(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 10 && long.includes(short);
+}
+
 function withCountry(address: string, country: string | null): string {
   if (!country || address.toLowerCase().includes(country.toLowerCase())) return address;
   return `${address}\n${country}`;
@@ -192,8 +273,9 @@ const SPAM_RESULT: ActionResult<PublicRequestResult> = {
 };
 
 /**
- * Crea una richiesta dal modulo pubblico. `ip` serve al limite di invii (5 all'ora per IP,
- * 100 all'ora in totale) e viene salvato sulla richiesta.
+ * Crea una richiesta dal modulo pubblico. Limiti: 5 all'ora per email del richiedente, 5 all'ora
+ * per IP (solo se `ip` è noto e affidabile, vedi getClientIp; viene salvato sulla richiesta),
+ * 300 all'ora in totale.
  */
 export async function createPublicRequest(
   rawInput: unknown,
@@ -204,9 +286,21 @@ export async function createPublicRequest(
     return fail("Il modulo non è al momento disponibile. Contatta il tuo referente BGP.");
   }
 
-  // Campo trappola compilato: fingiamo di aver ricevuto la richiesta senza salvare nulla.
-  const trap = (rawInput as { website?: unknown } | null)?.website;
-  if (typeof trap === "string" && trap.trim() !== "") return SPAM_RESULT;
+  // Campo trappola compilato o gettone mancante/falso: fingiamo di aver ricevuto la richiesta
+  // senza salvare nulla.
+  const raw = rawInput as { website?: unknown; formToken?: unknown } | null;
+  if (typeof raw?.website === "string" && raw.website.trim() !== "") return SPAM_RESULT;
+  const token = checkFormToken(raw?.formToken);
+  if (token === "invalid") return SPAM_RESULT;
+  if (token === "too-fast") return fail("Attendi qualche secondo e invia di nuovo la richiesta.");
+  if (token === "expired" || token === "bad-signature") {
+    // Il modulo aggiorna la pagina (nuovo gettone) quando riceve l'errore sul campo formToken.
+    const msg =
+      token === "expired"
+        ? "La pagina era aperta da più di un giorno: l'abbiamo aggiornata, premi di nuovo «Invia la richiesta»."
+        : "Il modulo non era più valido: l'abbiamo aggiornato, premi di nuovo «Invia la richiesta».";
+    return fail(msg, { formToken: msg });
+  }
 
   const parsed = publicRequestInput.safeParse(rawInput);
   if (!parsed.success) return fail("Controlla i campi evidenziati.", publicFieldErrors(parsed.error.issues));
@@ -234,25 +328,22 @@ export async function createPublicRequest(
     // Un invio alla volta: limiti esatti e niente contatti doppi creati in parallelo.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('bgp:public-form'))`);
 
-    const [total] = await tx
-      .select({ n: count() })
-      .from(sampleRequests)
-      .where(and(eq(sampleRequests.source, "MODULO_PUBBLICO"), gte(sampleRequests.createdAt, since)));
-    if (total.n >= MAX_TOTAL_PER_HOUR) {
+    const recent = (condition?: SQL) =>
+      tx
+        .select({ n: count() })
+        .from(sampleRequests)
+        .where(and(eq(sampleRequests.source, "MODULO_PUBBLICO"), gte(sampleRequests.createdAt, since), condition))
+        .then(([row]) => row.n);
+
+    if ((await recent()) >= MAX_TOTAL_PER_HOUR) {
       return fail("In questo momento riceviamo molte richieste. Riprova tra un'ora o contatta il tuo referente BGP.");
     }
-    const [perIp] = await tx
-      .select({ n: count() })
-      .from(sampleRequests)
-      .where(
-        and(
-          requesterIp ? eq(sampleRequests.requesterIp, requesterIp) : isNull(sampleRequests.requesterIp),
-          eq(sampleRequests.source, "MODULO_PUBBLICO"),
-          gte(sampleRequests.createdAt, since),
-        ),
-      );
-    if (perIp.n >= MAX_PER_IP_PER_HOUR) {
-      return fail("Hai inviato troppe richieste nell'ultima ora. Riprova più tardi o contatta il tuo referente BGP.");
+    const tooMany = "Hai inviato troppe richieste nell'ultima ora. Riprova più tardi o contatta il tuo referente BGP.";
+    if ((await recent(eq(sampleRequests.requesterEmail, input.requesterEmail))) >= MAX_PER_EMAIL_PER_HOUR) {
+      return fail(tooMany);
+    }
+    if (requesterIp && (await recent(eq(sampleRequests.requesterIp, requesterIp))) >= MAX_PER_IP_PER_HOUR) {
+      return fail(tooMany);
     }
 
     const today = formatDate(new Date());
@@ -260,6 +351,7 @@ export async function createPublicRequest(
     if (input.requesterPhone) meta.push(`Telefono del richiedente: ${input.requesterPhone}`);
 
     let contact: MatchedContact | null;
+    let createdNow = false;
     let confirmation: string;
 
     if (input.requesterType === "CLIENTE") {
@@ -280,6 +372,7 @@ export async function createPublicRequest(
           })
           .returning(matchColumns);
         contact = created;
+        createdNow = true;
       }
       confirmation = `Riceverai un'email all'indirizzo ${input.requesterEmail} quando i campioni saranno spediti.`;
     } else {
@@ -306,13 +399,27 @@ export async function createPublicRequest(
           })
           .returning(matchColumns);
         contact = created;
+        createdNow = true;
       } else if (agent && contact.agentId !== agent.id) {
         meta.push("Attenzione: in anagrafica il cliente non è associato all'agente che ha inviato la richiesta.");
       }
 
-      if (input.recipientEmail) {
+      // Cliente riconosciuto per nome: l'email indicata dall'agente può mancare in anagrafica.
+      // Non la sostituiamo (il modulo non ha login): resta nelle note e il contatto va verificato.
+      const contactEmails = parseEmailList(contact.email).map((e) => e.toLowerCase());
+      const emailOnFile = !!input.recipientEmail && contactEmails.includes(input.recipientEmail);
+      if (input.recipientEmail && !emailOnFile) {
+        meta.push(`Email cliente indicata dall'agente: ${input.recipientEmail} (non presente in anagrafica, da verificare).`);
+        if (!contact.needsReview) {
+          await tx.update(contacts).set({ needsReview: true }).where(eq(contacts.id, contact.id));
+        }
+      }
+
+      if (input.recipientEmail && emailOnFile) {
         confirmation = `Il cliente riceverà un'email all'indirizzo ${input.recipientEmail} quando i campioni saranno spediti.`;
-      } else if (parseEmailList(contact.email).length > 0) {
+      } else if (input.recipientEmail) {
+        confirmation = `Il nostro ufficio verificherà l'email del cliente che hai indicato (${input.recipientEmail}) prima di inviargli la conferma di spedizione.`;
+      } else if (contactEmails.length > 0) {
         confirmation = "Il cliente riceverà un'email di conferma quando i campioni saranno spediti.";
       } else {
         confirmation =
@@ -320,6 +427,12 @@ export async function createPublicRequest(
       }
     }
 
+    // Contatto già in anagrafica: segnala se la destinazione non è l'indirizzo registrato.
+    if (!createdNow && contact.defaultAddress && !sameAddress(input.address, contact.defaultAddress)) {
+      meta.push(
+        `Attenzione: indirizzo di destinazione diverso da quello in anagrafica (${contact.defaultAddress.replace(/\s+/g, " ").trim()}).`,
+      );
+    }
     if (contact.language !== input.language) {
       meta.push(
         `Lingua indicata nel modulo: ${LANGUAGE_LABELS[input.language]} (in anagrafica: ${LANGUAGE_LABELS[contact.language]}).`,

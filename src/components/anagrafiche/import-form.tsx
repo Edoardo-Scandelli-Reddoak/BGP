@@ -9,7 +9,32 @@ import { SubmitButton } from "@/components/ui/submit-button";
 import { formatNumber } from "@/lib/format";
 import { IMPORT_MAX_BYTES } from "./constants";
 
-const SKIPPED_SHOWN = 30;
+const ROWS_SHOWN = 30;
+
+type RowNote = { row: number; reason: string };
+
+/** Elenco di righe del file con il motivo (scartate o da verificare). */
+function RowNotes({ title, hint, rows }: { title: string; hint?: string; rows: RowNote[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div>
+      <p className="text-sm font-medium text-slate-800">
+        {title} <span className="font-normal tabular-nums text-slate-500">({formatNumber(rows.length, 0)})</span>
+      </p>
+      {hint ? <p className="text-xs text-slate-500">{hint}</p> : null}
+      <ul className="mt-1.5 max-h-60 space-y-1 overflow-y-auto text-sm text-slate-600">
+        {rows.slice(0, ROWS_SHOWN).map((s, i) => (
+          <li key={`${s.row}-${i}`}>
+            <span className="font-medium tabular-nums text-slate-800">Riga {s.row}:</span> {s.reason}
+          </li>
+        ))}
+      </ul>
+      {rows.length > ROWS_SHOWN ? (
+        <p className="mt-1 text-xs text-slate-500">…e altre {formatNumber(rows.length - ROWS_SHOWN, 0)} righe.</p>
+      ) : null}
+    </div>
+  );
+}
 
 export function ImportForm({ kind }: { kind: "contatti" | "prodotti" }) {
   const [state, formAction] = useActionState(importRegistryFile, null);
@@ -66,12 +91,15 @@ export function ImportForm({ kind }: { kind: "contatti" | "prodotti" }) {
 
 function ImportSummaryView({ data }: { data: ImportResultData }) {
   const isContacts = data.kind === "contatti";
+  // Righe importate ma con dati da controllare (es. lingua mancante): contatti «da verificare».
+  const warnings = data.warnings;
   const stats: { label: string; value: number; tone?: string }[] = [
     { label: isContacts ? "Clienti creati" : "Prodotti creati", value: data.created, tone: "text-emerald-700" },
     { label: "Aggiornati", value: data.updated, tone: "text-brand-700" },
     { label: "Invariati", value: data.unchanged },
     { label: "Righe scartate", value: data.skipped.length, tone: data.skipped.length ? "text-amber-700" : undefined },
   ];
+  if (warnings.length) stats.push({ label: "Da verificare", value: warnings.length, tone: "text-amber-700" });
   if (isContacts) {
     stats.push(
       { label: "Agenti creati", value: data.agentsCreated ?? 0, tone: "text-emerald-700" },
@@ -94,21 +122,16 @@ function ImportSummaryView({ data }: { data: ImportResultData }) {
           </div>
         ))}
       </dl>
-      {data.skipped.length > 0 ? (
-        <div>
-          <p className="text-sm font-medium text-slate-800">Righe scartate</p>
-          <ul className="mt-1.5 max-h-60 space-y-1 overflow-y-auto text-sm text-slate-600">
-            {data.skipped.slice(0, SKIPPED_SHOWN).map((s, i) => (
-              <li key={`${s.row}-${i}`}>
-                <span className="font-medium tabular-nums text-slate-800">Riga {s.row}:</span> {s.reason}
-              </li>
-            ))}
-          </ul>
-          {data.skipped.length > SKIPPED_SHOWN ? (
-            <p className="mt-1 text-xs text-slate-500">…e altre {data.skipped.length - SKIPPED_SHOWN} righe.</p>
-          ) : null}
-        </div>
-      ) : null}
+      <RowNotes title="Righe scartate" rows={data.skipped} />
+      <RowNotes
+        title="Da verificare"
+        hint={
+          isContacts
+            ? "Righe importate con dati da controllare (es. lingua mancante): verifica e correggi i contatti indicati."
+            : "Righe importate con dati da controllare: verifica e correggi i prodotti indicati."
+        }
+        rows={warnings}
+      />
       <Link
         href={isContacts ? "/anagrafiche/contatti" : "/anagrafiche/prodotti"}
         className="inline-block text-sm font-medium text-brand-700 hover:underline"

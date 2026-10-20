@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { useRequestEditing } from "./request-editing";
 import { RequestForm, type RequestFormInitial } from "./request-form";
 
 export type RequestEditConfig = {
@@ -12,6 +13,8 @@ export type RequestEditConfig = {
   today: string;
   itemsEditable: boolean;
   itemsLockedReason?: string;
+  /** Richiesta ancora nuova: nel form compare anche «Salva e invia al magazzino». */
+  canSendToWarehouse?: boolean;
 };
 
 /** Pannello «Richiesta»: vista in sola lettura (children, dal server) e, per il back office, modifica sul posto. */
@@ -25,16 +28,17 @@ export function RequestInfoCard({
   edit: RequestEditConfig | null;
   children: ReactNode;
 }) {
-  const [editing, setEditing] = useState(false);
+  const { editing, setEditing } = useRequestEditing();
   const [message, setMessage] = useState<string | null>(null);
+  const isEditing = Boolean(edit) && editing;
 
   return (
     <Card id="richiesta">
       <CardHeader
-        title={editing ? "Modifica richiesta" : "Richiesta"}
-        description={editing ? "Contatto, prodotti, destinazione e note." : description}
+        title={isEditing ? "Modifica richiesta" : "Richiesta"}
+        description={isEditing ? "Contatto, prodotti, destinazione e note." : description}
         actions={
-          edit && !editing ? (
+          edit && !isEditing ? (
             <Button
               variant="secondary"
               size="sm"
@@ -49,12 +53,12 @@ export function RequestInfoCard({
         }
       />
       <CardBody>
-        {message && !editing ? (
-          <Alert tone="success" className="mb-4">
+        {message && !isEditing ? (
+          <Alert tone={/attenzione|non inviat/i.test(message) ? "warning" : "success"} className="mb-4">
             {message}
           </Alert>
         ) : null}
-        {edit && editing ? (
+        {edit && isEditing ? (
           <RequestForm
             mode="edit"
             requestId={edit.requestId}
@@ -62,6 +66,7 @@ export function RequestInfoCard({
             today={edit.today}
             itemsEditable={edit.itemsEditable}
             itemsLockedReason={edit.itemsLockedReason}
+            canSendToWarehouse={edit.canSendToWarehouse}
             onCancel={() => setEditing(false)}
             onSaved={(m) => {
               setEditing(false);

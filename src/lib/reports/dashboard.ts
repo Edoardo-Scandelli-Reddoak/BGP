@@ -4,13 +4,14 @@ import { db } from "@/db";
 import type { RequestStatus } from "@/db/schema";
 import { TIME_ZONE } from "@/lib/format";
 import { STATUS_ORDER } from "@/lib/status";
-import { receivedBetween, shippedBetween } from "./conditions";
+import { effectiveShipmentDate, receivedBetween, shippedBetween } from "./conditions";
 import { addMonths, monthsBetween, monthStart } from "./period";
 
 /**
  * Dati del cruscotto direzione. Tutte le aggregazioni sono in SQL (GROUP BY).
  * Convenzione: "richieste" = ricevute nel periodo; spedizioni, m² e costi = richieste con data di
- * spedizione nel periodo (stato Spedita o Completata), come nel report m² mensile.
+ * spedizione effettiva nel periodo (stato Spedita o Completata; senza data di spedizione vale la data
+ * di ritiro del corriere), come nel report m² mensile.
  */
 
 export type DashboardKpi = {
@@ -22,7 +23,7 @@ export type DashboardKpi = {
   /** Spedizioni con un costo inserito (base del costo medio). */
   costCount: number;
   avgCost: number | null;
-  /** Giorni medi dalla ricezione alla spedizione. */
+  /** Giorni medi dalla ricezione alla spedizione (data effettiva). */
   avgDays: number | null;
 };
 
@@ -96,7 +97,7 @@ export async function getDashboardKpi(range: Range): Promise<DashboardKpi> {
            sum(shipping_cost)::float8 as cost,
            count(shipping_cost)::int as n_cost,
            avg(shipping_cost)::float8 as avg_cost,
-           avg(shipment_date - (received_at at time zone ${TIME_ZONE})::date)::float8 as avg_days,
+           avg(${effectiveShipmentDate} - (received_at at time zone ${TIME_ZONE})::date)::float8 as avg_days,
            (select coalesce(sum(pieces.area_m2), 0)::float8 from pieces
              where pieces.request_id in (select id from sample_requests where ${shippedBetween(range.da, range.a)})) as m2
     from sample_requests
@@ -141,7 +142,7 @@ export async function getMonthlySeries(range: Range): Promise<MonthPoint[]> {
       where ${receivedBetween(start, range.a)}
       group by 1`),
     db.execute<{ month: string; n: number; m2: number }>(sql`
-      select to_char(sample_requests.shipment_date, 'YYYY-MM') as month,
+      select to_char(${effectiveShipmentDate}, 'YYYY-MM') as month,
              count(distinct sample_requests.id)::int as n,
              coalesce(sum(pieces.area_m2), 0)::float8 as m2
       from sample_requests

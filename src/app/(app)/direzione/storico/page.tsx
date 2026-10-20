@@ -64,7 +64,8 @@ export default async function HistoryPage(props: PageProps<"/direzione/storico">
         <Card>
           <form method="get" action="/direzione/storico" className="px-5 py-4" aria-label="Filtri dello storico">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="grid grid-cols-2 gap-2 sm:col-span-2 lg:col-span-1">
+              {/* Due colonne su lg: con una sola i campi data tagliano il giorno (gg/mm/aaaa + icona). */}
+              <div className="grid grid-cols-2 gap-2 sm:col-span-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="f-da">Ricevuta dal</Label>
                   <Input id="f-da" type="date" name="da" defaultValue={filters.da} />
@@ -275,7 +276,7 @@ export default async function HistoryPage(props: PageProps<"/direzione/storico">
                             r.trackingNumber
                           )}
                         </TD>
-                        <TD className="whitespace-nowrap">{r.shipmentDate ? formatDate(r.shipmentDate) : DASH}</TD>
+                        <TD className="whitespace-nowrap">{r.shippedOn ? formatDate(r.shippedOn) : DASH}</TD>
                         <TD className="whitespace-nowrap text-right tabular-nums">{r.shippingCost === null ? DASH : formatEuro(r.shippingCost)}</TD>
                       </TR>
                     );

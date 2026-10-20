@@ -2,6 +2,15 @@ import type { Permission } from "@/lib/roles";
 
 export type NavCountKey = "NUOVA" | "IN_PREPARAZIONE" | "PRONTA_RITIRO" | "SPEDITA" | "bolle";
 
+/** Cosa conta il numero accanto alla voce (tooltip e testo per i lettori di schermo). */
+export const NAV_COUNT_LABELS: Record<NavCountKey, string> = {
+  NUOVA: "nuove da inviare al magazzino",
+  IN_PREPARAZIONE: "da preparare",
+  PRONTA_RITIRO: "pronte per il ritiro",
+  SPEDITA: "senza tracking",
+  bolle: "bolle da preparare",
+};
+
 export type NavItem = {
   href: string;
   label: string;

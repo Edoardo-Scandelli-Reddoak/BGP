@@ -98,7 +98,7 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
           </h2>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
             <KpiTile label="Richieste ricevute" value={kpi.received} hint="Data di ricezione nel periodo" />
-            <KpiTile label="Spedite" value={kpi.shipped} hint="Data di spedizione nel periodo" />
+            <KpiTile label="Spedite" value={kpi.shipped} hint="Data di spedizione (o di ritiro) nel periodo" />
             <KpiTile label="m² spediti" value={formatM2(kpi.m2)} hint="Dalle misure del magazzino" />
             <KpiTile
               label="Costo spedizioni"
@@ -163,7 +163,7 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
             </CardBody>
           </Card>
           <Card>
-            <CardHeader title="m² spediti per mese" description="Per mese della data di spedizione" />
+            <CardHeader title="m² spediti per mese" description="Per mese della data di spedizione (o di ritiro, se manca)" />
             <CardBody className="pt-8">
               {hasSeries ? (
                 <MonthlyBars
@@ -196,7 +196,8 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
 
         <Alert tone="info" title="Come leggere le tabelle">
           <strong>Richieste</strong> = ricevute nel periodo. <strong>Spedite</strong>, <strong>m²</strong> e{" "}
-          <strong>costi</strong> = richieste con data di spedizione nel periodo. Il costo è il costo di spedizione inserito
+          <strong>costi</strong> = richieste con data di spedizione nel periodo (se la logistica non l&apos;ha ancora
+          inserita, vale la data di ritiro). Il costo è il costo di spedizione inserito
           dalla logistica (definizione da confermare con BGP).
         </Alert>
 

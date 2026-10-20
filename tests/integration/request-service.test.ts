@@ -439,7 +439,7 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
       if (isDefaultTemplate("AVVISO_BOLLA", "it")) {
         expect(mails[0].subject).toBe(`Bolla di consegna richiesta — ${requestCode(mainId)} — ${fx.contacts.clienteIt.name}`);
         expect(mails[0].body).toContain("m² totali: 0,58");
-        expect(mails[0].body).toContain("N° colli / Peso: 2 colli — 3,50 kg");
+        expect(mails[0].body).toContain("N° colli: 2 — Peso: 3,50 kg");
       }
     });
 
@@ -604,7 +604,7 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
       }
     });
 
-    it("la conferma non parte due volte; dopo la chiusura si aggiornano solo i dati amministrativi", async () => {
+    it("la conferma non parte due volte; dopo la chiusura si aggiornano solo i dati amministrativi e la data di spedizione", async () => {
       const log = actor("LOGISTICA");
       expect(await svc.maybeSendShipmentConfirmation(null, mainId)).toBeNull();
       const res = await svc.updateLogisticsData(log, mainId, {
@@ -620,10 +620,20 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
       expect(await getRequest(mainId)).toMatchObject({
         status: "COMPLETATA",
         trackingNumber: "1Z 999 AA1",
-        shipmentDate: "2026-10-22",
+        pickupDate: "2026-10-21",
+        shipmentDate: "2026-10-23",
         shippingCost: 12.5,
       });
       expect(await getEmails(mainId, "CONFERMA_SPEDIZIONE")).toHaveLength(1);
+
+      // La data di spedizione non può precedere il ritiro né essere svuotata (senza data resta quella salvata).
+      const early = await svc.updateLogisticsData(log, mainId, { shipmentDate: "2026-10-20", ddtNumber: "13807" });
+      expectFail(early);
+      expect(early.fieldErrors?.shipmentDate).toBeTruthy();
+      expectOk(await svc.updateLogisticsData(log, mainId, { shipmentDate: "", ddtNumber: "13807", shippingCost: "12.5" }));
+      expect(await getRequest(mainId)).toMatchObject({ shipmentDate: "2026-10-23", shippingCost: 12.5 });
+      expectOk(await svc.updateLogisticsData(log, mainId, { shipmentDate: "2026-10-22", ddtNumber: "13807", shippingCost: "12.5" }));
+      expect((await getRequest(mainId)).shipmentDate).toBe("2026-10-22");
     });
 
     it("correzioni: motivo obbligatorio; una richiesta completata la riapre solo l'amministratore", async () => {
@@ -638,7 +648,10 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
       res = await svc.revertStatus(actor("ADMIN"), mainId, " tracking errato ");
       expectOk(res);
       expect(res.message).toMatch(/Spedita/);
-      expect(await getRequest(mainId)).toMatchObject({ status: "SPEDITA", completedAt: null });
+      const reopened = await getRequest(mainId);
+      expect(reopened).toMatchObject({ status: "SPEDITA", completedAt: null });
+      // La conferma già inviata resta registrata.
+      expect(reopened.notificationSentAt).toBeInstanceOf(Date);
       expect(await lastEvent(mainId)).toMatchObject({
         fromStatus: "COMPLETATA",
         toStatus: "SPEDITA",
@@ -646,6 +659,30 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
         note: "Correzione: tracking errato",
       });
       // La correzione non reinvia email in automatico.
+      expect(await getEmails(mainId, "CONFERMA_SPEDIZIONE")).toHaveLength(1);
+    });
+
+    it("dopo la riapertura salvare i dati di spedizione non reinvia la conferma", async () => {
+      const log = actor("LOGISTICA");
+      const res = await svc.updateLogisticsData(log, mainId, {
+        carrierId: fx.carrier.id,
+        pickupDate: "2026-10-21",
+        trackingNumber: "1Z 999 AA2",
+        shipmentDate: "2026-10-22",
+        ddtNumber: "13807",
+        shippingCost: "9.5",
+        logisticsNotes: "tracking corretto",
+      });
+      expectOk(res);
+      expect(res.message).toBe("Dati di spedizione salvati.");
+      expect(await getRequest(mainId)).toMatchObject({ status: "SPEDITA", trackingNumber: "1Z 999 AA2", shippingCost: 9.5 });
+      expect(await getEmails(mainId, "CONFERMA_SPEDIZIONE")).toHaveLength(1);
+
+      // Il DDT caricato ora non parte da solo: il messaggio indica «Reinvia conferma».
+      const pdf = new TextEncoder().encode("%PDF-1.4\n% DDT di prova\n%%EOF\n");
+      const upload = await svc.uploadDdt(log, mainId, { name: "DDT 13807-bis.pdf", type: "application/pdf", bytes: pdf });
+      expectOk(upload);
+      expect(upload.message).toMatch(/già stata inviata/);
       expect(await getEmails(mainId, "CONFERMA_SPEDIZIONE")).toHaveLength(1);
     });
 
@@ -793,6 +830,7 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
       const req = await getRequest(id);
       expect(req.status).toBe("COMPLETATA");
       expect(req.completedAt).toBeInstanceOf(Date);
+      expect(req.shipmentDate).toBe("2026-10-20");
       expect(await lastEvent(id)).toMatchObject({
         fromStatus: "SPEDITA",
         toStatus: "COMPLETATA",
@@ -800,6 +838,113 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
         note: "Completata senza conferma email: consegna a mano",
       });
       expectFail(await svc.completeWithoutEmail(log, id, "di nuovo"), /Spedita/);
+    });
+  });
+
+  describe("id fuori dai limiti, Automazione 3 tardiva, bolle da preparare", () => {
+    it("id oltre il massimo di Postgres: errore di validazione, nessuna eccezione dal database", async () => {
+      const bo = actor("BACKOFFICE");
+      const huge = "99999999999";
+      let res = await svc.createRequest(bo, info(huge as unknown as number, [{ productId: fx.products.a.id, quantity: 1 }]));
+      expectFail(res);
+      expect(res.fieldErrors?.contactId).toBeTruthy();
+      res = await svc.createRequest(bo, info(fx.contacts.clienteIt.id, [{ productId: Number(huge), quantity: 1 }]));
+      expectFail(res);
+      expect(res.fieldErrors?.["items.0.productId"]).toBeTruthy();
+      res = await svc.createRequest(bo, info("" as unknown as number, [{ productId: fx.products.a.id, quantity: 1 }]));
+      expectFail(res);
+      expect(res.fieldErrors?.contactId).toBe("Seleziona il contatto");
+
+      const id = createdId(
+        await svc.createRequest(bo, info(fx.contacts.clienteIt.id, [{ productId: fx.products.a.id, quantity: 1 }]), { sendToWarehouse: true }),
+      );
+      const piece = await svc.addPiece(actor("MAGAZZINO"), id, { productId: huge, lengthCm: 10, widthCm: 10 });
+      expectFail(piece);
+      expect(piece.fieldErrors?.productId).toBeTruthy();
+      const logistics = await svc.updateLogisticsData(actor("LOGISTICA"), id, { carrierId: huge });
+      expectFail(logistics);
+      expect(logistics.fieldErrors?.carrierId).toBeTruthy();
+    });
+
+    it("bolla richiesta su una richiesta già «Pronta per il ritiro»: avviso alla logistica e badge coerente con la pagina", async () => {
+      const bo = actor("BACKOFFICE");
+      const a = fx.products.a.id;
+      const id = createdId(await svc.createRequest(bo, info(fx.contacts.clienteIt.id, [{ productId: a, quantity: 1 }]), { sendToWarehouse: true }));
+      expectOk(await svc.updateWarehouseData(actor("MAGAZZINO"), id, { packagesCount: 1, weightKg: 2 }));
+      expectOk(await svc.advanceStatus(actor("MAGAZZINO"), id, "PRONTA_RITIRO", { acknowledgeNoPieces: true }));
+      expect(await getEmails(id, "AVVISO_BOLLA")).toHaveLength(0);
+
+      const before = (await svc.countByStatus()).bolle;
+      const res = await svc.updateRequestInfo(bo, id, info(fx.contacts.clienteIt.id, [{ productId: a, quantity: 1 }], { deliveryFormRequired: true }));
+      expectOk(res);
+      expect(res.message).toMatch(/Avviso bolla inviato alla logistica|email non inviata/);
+      const mails = await getEmails(id, "AVVISO_BOLLA");
+      expect(mails).toHaveLength(1);
+      expect(mails[0].triggeredById).toBe(bo.id);
+      expect((await svc.countByStatus()).bolle).toBe(before + 1);
+
+      // Salvare di nuovo con la bolla già richiesta non ripete l'avviso.
+      expectOk(await svc.updateRequestInfo(bo, id, info(fx.contacts.clienteIt.id, [{ productId: a, quantity: 1 }], { deliveryFormRequired: true, notes: "x" })));
+      expect(await getEmails(id, "AVVISO_BOLLA")).toHaveLength(1);
+
+      // Il numero DDT soddisfa la bolla (come nella pagina «Bolle da preparare»): esce dal conteggio.
+      expectOk(await svc.updateLogisticsData(actor("LOGISTICA"), id, { carrierId: fx.carrier.id, pickupDate: "2026-10-20", ddtNumber: "DDT-1" }));
+      expect((await svc.countByStatus()).bolle).toBe(before);
+      expect((await svc.getWorkflowSnapshot(id)) && (await svc.getWorkflowSnapshot(id))!.ddtNumber).toBe("DDT-1");
+
+      // Bolla tolta e richiesta di nuovo quando il DDT c'è già: niente avviso, non c'è nulla da preparare.
+      expectOk(await svc.updateRequestInfo(bo, id, info(fx.contacts.clienteIt.id, [{ productId: a, quantity: 1 }], { deliveryFormRequired: false })));
+      const again = await svc.updateRequestInfo(bo, id, info(fx.contacts.clienteIt.id, [{ productId: a, quantity: 1 }], { deliveryFormRequired: true }));
+      expectOk(again);
+      expect(again.message).toBe("Dati della richiesta aggiornati.");
+      expect(await getEmails(id, "AVVISO_BOLLA")).toHaveLength(1);
+    });
+  });
+
+  describe("report: mese della spedizione effettiva (data di spedizione, altrimenti di ritiro)", () => {
+    const MONTH = "2031-03";
+    const PICKUP = "2031-03-14";
+    let id: number;
+
+    it("una richiesta «Spedita» senza data di spedizione conta nel mese del ritiro", async () => {
+      const m2 = await import("@/lib/reports/m2");
+      const dashboard = await import("@/lib/reports/dashboard");
+      const history = await import("@/lib/reports/history");
+
+      id = createdId(
+        await svc.createRequest(actor("BACKOFFICE"), info(fx.contacts.noEmail.id, [{ productId: fx.products.a.id, quantity: 1 }]), {
+          sendToWarehouse: true,
+        }),
+      );
+      expectOk(await svc.updateWarehouseData(actor("MAGAZZINO"), id, { packagesCount: 1, weightKg: 1 }));
+      expectOk(await svc.addPiece(actor("MAGAZZINO"), id, { productId: fx.products.a.id, lengthCm: 100, widthCm: 50, quantity: 2 }));
+      expectOk(await svc.advanceStatus(actor("MAGAZZINO"), id, "PRONTA_RITIRO"));
+      expectOk(await svc.updateLogisticsData(actor("LOGISTICA"), id, { carrierId: fx.carrier.id, pickupDate: PICKUP, shippingCost: "7" }));
+      expectOk(await svc.advanceStatus(actor("LOGISTICA"), id, "SPEDITA"));
+      expect((await getRequest(id)).shipmentDate).toBeNull();
+
+      const report = await m2.getMonthlyM2Report(MONTH);
+      const shipment = report.shipments.find((s) => s.id === id);
+      expect(shipment).toMatchObject({ shipmentDate: PICKUP, pickupDateUsed: true, pieces: 2, m2: 1 });
+      expect(report.rows.find((r) => r.productId === fx.products.a.id)).toMatchObject({ requests: 1, pieces: 2, m2: 1 });
+      expect((await m2.getMonthlyM2Report("2031-02")).shipments.some((s) => s.id === id)).toBe(false);
+
+      const kpi = await dashboard.getDashboardKpi({ da: `${MONTH}-01`, a: `${MONTH}-31` });
+      expect(kpi.shipped).toBeGreaterThanOrEqual(1);
+      expect(kpi.m2).toBeGreaterThanOrEqual(1);
+      const series = await dashboard.getMonthlySeries({ da: `${MONTH}-01`, a: `${MONTH}-31` });
+      expect(series.find((p) => p.month === MONTH)?.shipped).toBeGreaterThanOrEqual(1);
+
+      const rows = await history.getHistoryForExport({ contatto: fx.contacts.noEmail.name });
+      expect(rows.find((r) => r.id === id)).toMatchObject({ shipmentDate: null, shippedOn: PICKUP });
+    });
+
+    it("«Completa senza email» registra come data di spedizione quella del ritiro", async () => {
+      const m2 = await import("@/lib/reports/m2");
+      expectOk(await svc.completeWithoutEmail(actor("LOGISTICA"), id, "ritiro in sede"));
+      expect(await getRequest(id)).toMatchObject({ status: "COMPLETATA", shipmentDate: PICKUP });
+      const report = await m2.getMonthlyM2Report(MONTH);
+      expect(report.shipments.find((s) => s.id === id)).toMatchObject({ shipmentDate: PICKUP, pickupDateUsed: false, m2: 1 });
     });
   });
 
