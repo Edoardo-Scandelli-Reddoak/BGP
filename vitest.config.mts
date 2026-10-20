@@ -23,7 +23,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "src/**/*.test.ts"],
     env: {
       ...dotEnv(),
       // Nessuna email reale durante i test: il registro email riporta lo stato SIMULATA.

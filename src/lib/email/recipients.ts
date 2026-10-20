@@ -1,4 +1,15 @@
-const EMAIL_RE = /^[^\s@;,<>]+@[^\s@;,<>]+\.[^\s@;,<>]+$/;
+const EMAIL_RE = /^[^\s@;,<>()[\]:"]+@[^\s@;,<>()[\]:"']+\.[^\s@;,<>()[\]:"']+$/;
+
+/**
+ * Il file contatti di BGP ha etichette e punteggiatura attorno agli indirizzi:
+ * "mailto:a@b.it", "Per DDT:a@b.it", "(a@b.it)'", "a@b.it>", "a@b.it." → "a@b.it".
+ */
+function cleanEmailToken(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^[^@]*:/, "")
+    .replace(/^[('"<[]+|[)'">\],.]+$/g, "");
+}
 
 export function isValidEmail(value: string): boolean {
   return EMAIL_RE.test(value.trim());
@@ -15,7 +26,7 @@ export function parseEmailList(value: string | null | undefined | string[]): str
   const seen = new Set<string>();
   const out: string[] = [];
   for (const raw of parts) {
-    const email = raw.trim().replace(/^mailto:/i, "");
+    const email = cleanEmailToken(raw);
     if (!email || !isValidEmail(email)) continue;
     const key = email.toLowerCase();
     if (seen.has(key)) continue;
@@ -31,7 +42,7 @@ export function invalidEmails(value: string | null | undefined): string[] {
   return value
     .split(/[;,\s]+/)
     .map((s) => s.trim())
-    .filter((s) => s && !isValidEmail(s));
+    .filter((s) => s && !isValidEmail(cleanEmailToken(s)));
 }
 
 /** Normalizza per il salvataggio: "a@b.it; c@d.it" */

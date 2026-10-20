@@ -17,7 +17,7 @@ import { fail, zodFieldErrors, type ActionResult } from "@/lib/action-result";
 import type { SessionUser } from "@/lib/auth/session";
 import { sendRequestNotification, type NotificationResult } from "@/lib/email/notifications";
 import { parseEmailList } from "@/lib/email/recipients";
-import { todayIso } from "@/lib/format";
+import { TIME_ZONE, todayIso } from "@/lib/format";
 import { can } from "@/lib/roles";
 import { nextStatus, previousStatus, STATUS_LABELS } from "@/lib/status";
 import {
@@ -53,11 +53,15 @@ const optionalText = (max: number) =>
     .nullish()
     .transform((v) => (v ? v : null));
 
-const isoDate = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Data non valida")
-  .nullish()
-  .transform((v) => (v ? v : null));
+/** Data 'YYYY-MM-DD'; un <input type="date"> vuoto invia "" e diventa null. */
+const isoDate = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Data non valida")
+    .nullish()
+    .transform((v) => (v ? v : null)),
+);
 
 export const requestItemInput = z.object({
   productId: z.coerce.number().int().positive("Prodotto non valido"),
@@ -71,7 +75,7 @@ export const requestInfoInput = z.object({
   notes: optionalText(5000),
   deliveryFormRequired: z.boolean(),
   /** Data di ricezione (se la richiesta è arrivata per telefono/email in un giorno precedente). */
-  receivedAt: isoDate,
+  receivedAt: isoDate.refine((v) => !v || v <= todayIso(), "La data di ricezione non può essere nel futuro"),
   items: z
     .array(requestItemInput)
     .min(1, "Aggiungi almeno un prodotto")
@@ -200,9 +204,17 @@ function mergeItems(items: z.output<typeof requestItemInput>[]) {
 
 function receivedAtFrom(iso: string | null): Date | undefined {
   if (!iso) return undefined;
-  const today = todayIso();
-  // Stessa giornata: teniamo l'ora attuale; giorno precedente: mezzogiorno di quel giorno.
-  return iso === today ? new Date() : new Date(`${iso}T12:00:00`);
+  // Stessa giornata: teniamo l'ora attuale; giorno precedente: mezzogiorno (ora di Roma) di quel giorno.
+  return iso === todayIso() ? new Date() : romeNoon(iso);
+}
+
+/** Mezzogiorno del giorno indicato nel fuso Europe/Rome, indipendente dal fuso del server. */
+function romeNoon(iso: string): Date {
+  const utcNoon = new Date(`${iso}T12:00:00Z`);
+  const romeHour = Number(
+    new Intl.DateTimeFormat("en-GB", { timeZone: TIME_ZONE, hour: "2-digit", hour12: false }).format(utcNoon),
+  );
+  return new Date(utcNoon.getTime() - (romeHour - 12) * 3600_000);
 }
 
 function notificationMessage(n: NotificationResult | null, okText: string): string | undefined {
@@ -282,7 +294,7 @@ export async function updateRequestInfo(actor: Actor, id: number, rawInput: Requ
     items.length !== current.items.length ||
     items.some((i) => {
       const b = before.get(i.productId);
-      return !b || b.quantity !== i.quantity || (b.notes ?? null) !== (i.notes ?? null);
+      return !b || b.quantity !== i.quantity || (b.notes?.trim() || null) !== (i.notes ?? null);
     });
 
   if (itemsChanged) {
@@ -352,6 +364,18 @@ export async function updateWarehouseData(actor: Actor, id: number, rawInput: Wa
   if (denied) return denied;
   const parsed = warehouseInput.safeParse(rawInput);
   if (!parsed.success) return fail("Controlla i campi evidenziati.", zodFieldErrors(parsed.error.issues));
+  const [current] = await db
+    .select({ status: sampleRequests.status })
+    .from(sampleRequests)
+    .where(eq(sampleRequests.id, id))
+    .limit(1);
+  if (current.status !== "IN_PREPARAZIONE") {
+    // La richiesta è già pronta per il ritiro: non si possono svuotare i dati che l'hanno resa tale.
+    const fieldErrors: Record<string, string> = {};
+    if (!parsed.data.packagesCount) fieldErrors.packagesCount = "Obbligatorio dopo «Pronta per il ritiro»";
+    if (!parsed.data.weightKg) fieldErrors.weightKg = "Obbligatorio dopo «Pronta per il ritiro»";
+    if (Object.keys(fieldErrors).length) return fail("Colli e peso sono obbligatori per una richiesta pronta per il ritiro.", fieldErrors);
+  }
   await db
     .update(sampleRequests)
     .set({
@@ -429,6 +453,12 @@ export async function updateLogisticsData(actor: Actor, id: number, rawInput: Lo
     return fail("La data di spedizione non può precedere la data di ritiro.", {
       shipmentDate: "Precede la data di ritiro",
     });
+  }
+  if (current.status === "SPEDITA") {
+    const fieldErrors: Record<string, string> = {};
+    if (!input.carrierId) fieldErrors.carrierId = "Obbligatorio per una richiesta spedita";
+    if (!input.pickupDate) fieldErrors.pickupDate = "Obbligatoria per una richiesta spedita";
+    if (Object.keys(fieldErrors).length) return fail("Corriere e data di ritiro sono obbligatori per una richiesta spedita.", fieldErrors);
   }
   if (current.status === "COMPLETATA") {
     // Dopo la chiusura restano modificabili solo i dati "amministrativi" (il costo arriva spesso dopo).
@@ -637,12 +667,36 @@ export async function resendShipmentConfirmation(actor: Actor, id: number): Prom
   }
   if (s.status === "SPEDITA" && s.notificationSentAt === null) {
     const msg = await maybeSendShipmentConfirmation(actor.id, id);
-    return msg?.includes("NON inviata") ? fail(msg) : { ok: true, message: msg ?? "Nessuna email da inviare." };
+    const [after] = await db
+      .select({ status: sampleRequests.status })
+      .from(sampleRequests)
+      .where(eq(sampleRequests.id, id))
+      .limit(1);
+    if (after?.status !== "COMPLETATA") return fail(msg ?? "Conferma non inviata.");
+    return { ok: true, message: msg ?? "Conferma inviata." };
   }
   const n = await sendRequestNotification("CONFERMA_SPEDIZIONE", id, actor.id);
   if (n.status === "ERRORE") return fail(`Email non inviata: ${n.error}`);
-  await db.update(sampleRequests).set({ notificationSentAt: new Date() }).where(eq(sampleRequests.id, id));
-  return { ok: true, message: notificationMessage(n, "Conferma di spedizione inviata di nuovo") };
+  const closed = await db.transaction(async (tx) => {
+    await tx.update(sampleRequests).set({ notificationSentAt: new Date() }).where(eq(sampleRequests.id, id));
+    if (s.status !== "SPEDITA") return false;
+    const rows = await tx
+      .update(sampleRequests)
+      .set({ status: "COMPLETATA", completedAt: new Date() })
+      .where(and(eq(sampleRequests.id, id), eq(sampleRequests.status, "SPEDITA")))
+      .returning({ id: sampleRequests.id });
+    if (rows.length === 0) return false;
+    await tx.insert(statusEvents).values({
+      requestId: id,
+      fromStatus: "SPEDITA",
+      toStatus: "COMPLETATA",
+      userId: actor.id,
+      note: `Conferma di spedizione ${n.status === "SIMULATA" ? "simulata" : "inviata"} di nuovo a ${n.to.join(", ")}`,
+    });
+    return true;
+  });
+  const message = notificationMessage(n, "Conferma di spedizione inviata di nuovo");
+  return { ok: true, message: closed ? `${message} Richiesta completata.` : message };
 }
 
 /** Chiude una richiesta «Spedita» senza email (es. ritiro in sede, consegna a mano, contatto senza email). */
@@ -671,7 +725,7 @@ export async function completeWithoutEmail(actor: Actor, id: number, note: strin
 
 /**
  * Correzione: riporta la richiesta allo stato precedente (motivo obbligatorio).
- * Solo l'amministratore può riaprire una richiesta completata. Non reinvia email in automatico.
+ * Solo l'amministratore può riaprire una richiesta completata (la conferma di spedizione torna da inviare).
  */
 export async function revertStatus(actor: Actor, id: number, note: string): Promise<Result> {
   if (!can(actor.role, "requests.revert")) return fail(DENIED);
@@ -690,7 +744,9 @@ export async function revertStatus(actor: Actor, id: number, note: string): Prom
   const done = await db.transaction(async (tx) => {
     const rows = await tx
       .update(sampleRequests)
-      .set({ status: prev, ...(current.status === "COMPLETATA" ? { completedAt: null } : {}) })
+      // Riaprendo una richiesta completata la conferma di spedizione torna "da inviare": quando la logistica
+      // salva tracking e data (o usa «Invia conferma») l'email riparte e la richiesta si richiude.
+      .set({ status: prev, ...(current.status === "COMPLETATA" ? { completedAt: null, notificationSentAt: null } : {}) })
       .where(and(eq(sampleRequests.id, id), eq(sampleRequests.status, current.status)))
       .returning({ id: sampleRequests.id });
     if (rows.length === 0) return false;

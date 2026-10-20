@@ -1,12 +1,21 @@
 import ExcelJS from "exceljs";
 import { parseCsv, type RawRow } from "./parse";
 
+/** UTF-8 se valido, altrimenti Windows-1252 (Excel italiano salva così i CSV "separati da punto e virgola"). */
+function decodeText(buffer: Buffer): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder("windows-1252").decode(buffer);
+  }
+}
+
 /** Legge il primo foglio di un file .xlsx oppure un .csv e restituisce le righe come oggetti. */
 export async function readTabularFile(fileName: string, data: ArrayBuffer | Buffer): Promise<RawRow[]> {
   const lower = fileName.toLowerCase();
   const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
   if (lower.endsWith(".csv") || lower.endsWith(".txt")) {
-    return parseCsv(buffer.toString("utf8"));
+    return parseCsv(decodeText(buffer));
   }
   if (!lower.endsWith(".xlsx")) throw new Error("Formato non supportato: usa .xlsx o .csv");
   const wb = new ExcelJS.Workbook();

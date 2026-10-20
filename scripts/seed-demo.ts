@@ -15,6 +15,7 @@ import {
   products,
   requestItems,
   sampleRequests,
+  settings,
   statusEvents,
   users,
   type RequestStatus,
@@ -66,6 +67,14 @@ async function main() {
     }
   }
   console.log(`Utenti demo pronti (password: ${password}).`);
+
+  // Destinatari delle automazioni 1 e 3 (in sviluppo le email finiscono in Mailpit).
+  for (const [key, value] of [
+    ["warehouseEmails", ["magazzino@demo.local"]],
+    ["logisticsEmails", ["logistica@demo.local"]],
+  ] as const) {
+    await db.insert(settings).values({ key, value: [...value] }).onConflictDoNothing();
+  }
 
   const already = await db.select({ n: sql<number>`count(*)::int` }).from(sampleRequests);
   if (already[0].n > 0) {

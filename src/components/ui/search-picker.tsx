@@ -118,7 +118,7 @@ export function SearchPicker<T>({
             setOpen(false);
           }
         }}
-        className="block h-10 w-full rounded-lg border-0 bg-white px-3 text-sm shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-brand-600 aria-[invalid=true]:ring-red-500"
+        className="block h-10 w-full rounded-lg border-0 bg-white px-3 text-base sm:text-sm shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-brand-600 aria-[invalid=true]:ring-red-500"
       />
       {loading ? (
         <span className="pointer-events-none absolute right-3 top-3 size-4 animate-spin rounded-full border-2 border-slate-400 border-r-transparent" />

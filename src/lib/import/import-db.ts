@@ -53,93 +53,96 @@ export async function importContacts(rows: RawRow[]): Promise<ImportSummary> {
   const { agents, customers } = parseContactRows(rows);
   const langs = agentLanguages(customers.rows);
 
-  const existing = await db
-    .select({
-      id: contacts.id,
-      type: contacts.type,
-      name: contacts.name,
-      email: contacts.email,
-      defaultAddress: contacts.defaultAddress,
-      country: contacts.country,
-      language: contacts.language,
-      agentId: contacts.agentId,
-      phone: contacts.phone,
-    })
-    .from(contacts);
+  // Tutto o niente: un errore a metà non lascia un import parziale.
+  return db.transaction(async (tx) => {
+    const existing = await tx
+      .select({
+        id: contacts.id,
+        type: contacts.type,
+        name: contacts.name,
+        email: contacts.email,
+        defaultAddress: contacts.defaultAddress,
+        country: contacts.country,
+        language: contacts.language,
+        agentId: contacts.agentId,
+        phone: contacts.phone,
+      })
+      .from(contacts);
 
-  const agentIdByKey = new Map<string, number>();
-  for (const c of existing.filter((c) => c.type === "AGENTE")) agentIdByKey.set(agentKey(c.name, c.email), c.id);
+    const agentIdByKey = new Map<string, number>();
+    for (const c of existing.filter((c) => c.type === "AGENTE")) agentIdByKey.set(agentKey(c.name, c.email), c.id);
 
-  let agentsCreated = 0;
-  let agentsUpdated = 0;
-  for (const a of agents) {
-    const id = agentIdByKey.get(a.key);
-    if (id) {
-      const cur = existing.find((c) => c.id === id)!;
-      if (cur.name !== a.name || (a.email && cur.email !== a.email)) {
-        await db.update(contacts).set({ name: a.name, email: a.email ?? cur.email }).where(eq(contacts.id, id));
-        agentsUpdated++;
+    let agentsCreated = 0;
+    let agentsUpdated = 0;
+    for (const a of agents) {
+      const id = agentIdByKey.get(a.key);
+      if (id) {
+        const cur = existing.find((c) => c.id === id)!;
+        if (cur.name !== a.name || (a.email && cur.email !== a.email)) {
+          await tx.update(contacts).set({ name: a.name, email: a.email ?? cur.email }).where(eq(contacts.id, id));
+          agentsUpdated++;
+        }
+      } else {
+        const [row] = await tx
+          .insert(contacts)
+          .values({ type: "AGENTE", name: a.name, email: a.email, language: langs.get(a.key) ?? "it" })
+          .returning({ id: contacts.id });
+        agentIdByKey.set(a.key, row.id);
+        agentsCreated++;
       }
-    } else {
-      const [row] = await db
-        .insert(contacts)
-        .values({ type: "AGENTE", name: a.name, email: a.email, language: langs.get(a.key) ?? "it" })
-        .returning({ id: contacts.id });
-      agentIdByKey.set(a.key, row.id);
-      agentsCreated++;
     }
-  }
 
-  const customerByKey = new Map(
-    existing.filter((c) => c.type === "CLIENTE").map((c) => [customerKey(c.name, c.defaultAddress), c]),
-  );
-  const toInsert: (typeof contacts.$inferInsert)[] = [];
-  let updated = 0;
-  let unchanged = 0;
-  for (const c of customers.rows) {
-    const agentId = c.agentKey ? (agentIdByKey.get(c.agentKey) ?? null) : null;
-    const cur = customerByKey.get(c.key);
-    if (!cur) {
-      toInsert.push({
-        type: "CLIENTE",
-        name: c.name,
-        email: c.email,
-        defaultAddress: c.defaultAddress,
-        country: c.country,
+    const customerByKey = new Map(
+      existing.filter((c) => c.type === "CLIENTE").map((c) => [customerKey(c.name, c.defaultAddress), c]),
+    );
+    const toInsert: (typeof contacts.$inferInsert)[] = [];
+    let updated = 0;
+    let unchanged = 0;
+    for (const c of customers.rows) {
+      const agentId = c.agentKey ? (agentIdByKey.get(c.agentKey) ?? null) : null;
+      const cur = customerByKey.get(c.key);
+      if (!cur) {
+        toInsert.push({
+          type: "CLIENTE",
+          name: c.name,
+          email: c.email,
+          defaultAddress: c.defaultAddress,
+          country: c.country,
+          language: c.language,
+          phone: c.phone,
+          agentId,
+        });
+        continue;
+      }
+      const patch = {
+        email: c.email ?? cur.email,
+        country: c.country ?? cur.country,
         language: c.language,
-        phone: c.phone,
         agentId,
-      });
-      continue;
+        phone: c.phone ?? cur.phone,
+      };
+      const changed =
+        patch.email !== cur.email ||
+        patch.country !== cur.country ||
+        patch.language !== cur.language ||
+        patch.agentId !== cur.agentId ||
+        patch.phone !== cur.phone;
+      if (changed) {
+        await tx.update(contacts).set(patch).where(eq(contacts.id, cur.id));
+        updated++;
+      } else unchanged++;
     }
-    const patch = {
-      email: c.email ?? cur.email,
-      country: c.country ?? cur.country,
-      language: c.language,
-      agentId,
-      phone: c.phone ?? cur.phone,
-    };
-    const changed =
-      patch.email !== cur.email ||
-      patch.country !== cur.country ||
-      patch.language !== cur.language ||
-      patch.agentId !== cur.agentId ||
-      patch.phone !== cur.phone;
-    if (changed) {
-      await db.update(contacts).set(patch).where(eq(contacts.id, cur.id));
-      updated++;
-    } else unchanged++;
-  }
-  for (const part of chunks(toInsert)) await db.insert(contacts).values(part);
+    for (const part of chunks(toInsert)) await tx.insert(contacts).values(part);
 
-  return {
-    created: toInsert.length,
-    updated,
-    unchanged,
-    skipped: customers.skipped,
-    agentsCreated,
-    agentsUpdated,
-  };
+    return {
+      created: toInsert.length,
+      updated,
+      unchanged,
+      skipped: customers.skipped,
+      agentsCreated,
+      agentsUpdated,
+    };
+  });
 }
 
 /**
@@ -148,33 +151,35 @@ export async function importContacts(rows: RawRow[]): Promise<ImportSummary> {
  */
 export async function importProducts(rows: RawRow[]): Promise<ImportSummary> {
   const parsed = parseProductRows(rows);
-  const existing = await db
-    .select({ id: products.id, code: products.code, description: products.description, active: products.active })
-    .from(products);
-  const byCode = new Map(existing.map((p) => [p.code.toUpperCase(), p]));
+  return db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ id: products.id, code: products.code, description: products.description, active: products.active })
+      .from(products);
+    const byCode = new Map(existing.map((p) => [p.code.toUpperCase(), p]));
 
-  const toInsert: (typeof products.$inferInsert)[] = [];
-  const toUpdate: { id: number; description: string }[] = [];
-  const toReactivate: number[] = [];
-  let unchanged = 0;
-  for (const p of parsed.rows) {
-    const cur = byCode.get(p.code.toUpperCase());
-    if (!cur) toInsert.push({ code: p.code, description: p.description, active: true });
-    else if (cur.description !== p.description && p.description) toUpdate.push({ id: cur.id, description: p.description });
-    else if (!cur.active) toReactivate.push(cur.id);
-    else unchanged++;
-  }
-  for (const part of chunks(toInsert)) await db.insert(products).values(part);
-  for (const u of toUpdate) {
-    await db.update(products).set({ description: u.description, active: true }).where(eq(products.id, u.id));
-  }
-  for (const part of chunks(toReactivate)) {
-    await db.update(products).set({ active: true }).where(inArray(products.id, part));
-  }
-  return {
-    created: toInsert.length,
-    updated: toUpdate.length + toReactivate.length,
-    unchanged,
-    skipped: parsed.skipped,
-  };
+    const toInsert: (typeof products.$inferInsert)[] = [];
+    const toUpdate: { id: number; description: string }[] = [];
+    const toReactivate: number[] = [];
+    let unchanged = 0;
+    for (const p of parsed.rows) {
+      const cur = byCode.get(p.code.toUpperCase());
+      if (!cur) toInsert.push({ code: p.code, description: p.description, active: true });
+      else if (cur.description !== p.description && p.description) toUpdate.push({ id: cur.id, description: p.description });
+      else if (!cur.active) toReactivate.push(cur.id);
+      else unchanged++;
+    }
+    for (const part of chunks(toInsert)) await tx.insert(products).values(part);
+    for (const u of toUpdate) {
+      await tx.update(products).set({ description: u.description, active: true }).where(eq(products.id, u.id));
+    }
+    for (const part of chunks(toReactivate)) {
+      await tx.update(products).set({ active: true }).where(inArray(products.id, part));
+    }
+    return {
+      created: toInsert.length,
+      updated: toUpdate.length + toReactivate.length,
+      unchanged,
+      skipped: parsed.skipped,
+    };
+  });
 }
