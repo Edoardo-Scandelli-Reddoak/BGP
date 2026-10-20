@@ -125,7 +125,7 @@ export default async function RichiestePage({ searchParams }: PageProps<"/richie
               name="q"
               type="search"
               defaultValue={q}
-              placeholder="Codice (CAMP-00012), contatto o codice prodotto"
+              placeholder="Codice, contatto, destinatario o prodotto"
             />
             <button type="submit" className={buttonClasses("secondary", "md")}>
               Cerca

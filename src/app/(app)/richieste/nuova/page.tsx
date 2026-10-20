@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { contacts } from "@/db/schema";
 import { RequestForm, type FormContact } from "@/components/richieste/request-form";
+import { contactPrefill, EMPTY_PREFILL } from "@/components/richieste/utils";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardBody } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
@@ -44,6 +45,7 @@ export default async function NuovaRichiestaPage({ searchParams }: PageProps<"/r
   const contactId = parseDbId(Array.isArray(contatto) ? contatto[0] : contatto);
   const contact = contactId ? await loadContact(contactId) : null;
   const contactNotFound = contatto !== undefined && !contact;
+  const prefill = contact ? contactPrefill(contact) : EMPTY_PREFILL;
   const today = todayIso();
 
   return (
@@ -55,7 +57,7 @@ export default async function NuovaRichiestaPage({ searchParams }: PageProps<"/r
           </Link>
         }
         title="Nuova richiesta di campioni"
-        description="Inserisci contatto, prodotti e indirizzo. Puoi salvare la richiesta e inviarla al magazzino in un secondo momento."
+        description="Contatto, destinatario e consegna, prodotti con il formato del campione. Puoi salvare la richiesta e inviarla al magazzino in un secondo momento."
       />
       {contactNotFound ? (
         <Alert tone="warning" className="mb-4">
@@ -79,7 +81,12 @@ export default async function NuovaRichiestaPage({ searchParams }: PageProps<"/r
             }
             initial={{
               contact,
-              destinationAddress: contact ? [contact.name, contact.defaultAddress?.trim()].filter(Boolean).join("\n") : "",
+              // Stessa precompilazione della scelta del contatto nel form (destinatario, indirizzo, telefono).
+              recipientName: prefill.recipientName,
+              attentionOf: "",
+              destinationAddress: prefill.destinationAddress,
+              phoneNotice: null,
+              phoneNoticeNumber: prefill.phone,
               notes: "",
               deliveryFormRequired: false,
               receivedDate: today,

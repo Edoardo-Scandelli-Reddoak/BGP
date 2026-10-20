@@ -36,7 +36,7 @@ export function RequestInfoCard({
     <Card id="richiesta">
       <CardHeader
         title={isEditing ? "Modifica richiesta" : "Richiesta"}
-        description={isEditing ? "Contatto, prodotti, destinazione e note." : description}
+        description={isEditing ? "Contatto, destinatario e consegna, prodotti e note." : description}
         actions={
           edit && !isEditing ? (
             <Button

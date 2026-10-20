@@ -6,6 +6,13 @@ import { Card, CardBody, CardHeader, DetailItem } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import {
+  attentionMissing,
+  ItemFormat,
+  PhoneNoticeBadge,
+  PhoneNoticeValue,
+  recipientOf,
+} from "@/components/logistica/delivery-info";
 import { formatBytes } from "@/components/logistica/utils";
 import { requireUser } from "@/lib/auth/session";
 import { parseEmailList } from "@/lib/email/recipients";
@@ -26,6 +33,9 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
 function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
   const code = requestCode(r.id);
   const emails = parseEmailList(r.contact.email);
+  const recipient = recipientOf(r, r.contact.name);
+  // Lo stesso prodotto può essere richiesto in due formati: i m² misurati vanno sulla prima riga.
+  const m2Shown = new Set<number>();
   return (
     <Card>
       <CardHeader
@@ -33,8 +43,9 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
           <span className="flex flex-wrap items-center gap-2">
             <span>{code}</span>
             <span className="font-normal text-slate-500">·</span>
-            <span>{r.contact.name}</span>
+            <span>{recipient}</span>
             {r.bollaReady ? <Badge tone="green">Bolla pronta</Badge> : <Badge tone="amber">Da preparare</Badge>}
+            <PhoneNoticeBadge phoneNotice={r.phoneNotice} number={r.phoneNoticeNumber} />
           </span>
         }
         description={`Ricevuta il ${formatDate(r.receivedAt)}${r.ddtNumber ? ` · DDT n. ${r.ddtNumber}` : ""}`}
@@ -55,7 +66,7 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
         }
       />
       <CardBody className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        <Block title="Destinatario">
+        <Block title="Cessionario (contatto)">
           <p className="font-semibold text-slate-900">{r.contact.name}</p>
           {r.contact.company && r.contact.company !== r.contact.name ? <p>{r.contact.company}</p> : null}
           {r.contact.defaultAddress ? <p className="whitespace-pre-line">{r.contact.defaultAddress}</p> : null}
@@ -91,7 +102,19 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
         </Block>
 
         <Block title="Luogo di destinazione">
-          <p className="whitespace-pre-line">{r.destinationAddress || "—"}</p>
+          <p className="font-semibold text-slate-900">{recipient}</p>
+          {r.attentionOf?.trim() ? (
+            <p>Alla c.a. {r.attentionOf.trim()}</p>
+          ) : attentionMissing(r) ? (
+            <p className="text-xs text-amber-700">«Alla c.a.» non indicato: il destinatario sembra una ditta.</p>
+          ) : null}
+          <p className="whitespace-pre-line">{r.destinationAddress || "Indirizzo non indicato"}</p>
+          <div className="pt-3">
+            <p className="text-xs font-semibold text-slate-500">Preavviso telefonico</p>
+            <p>
+              <PhoneNoticeValue phoneNotice={r.phoneNotice} number={r.phoneNoticeNumber} />
+            </p>
+          </div>
           {r.notes ? (
             <div className="pt-3">
               <p className="text-xs font-semibold text-slate-500">Note della richiesta</p>
@@ -138,6 +161,7 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
           <THead>
             <tr>
               <TH>Codice</TH>
+              <TH>Formato</TH>
               <TH>Descrizione</TH>
               <TH className="text-right">Quantità</TH>
               <TH className="text-right">m²</TH>
@@ -145,10 +169,14 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
           </THead>
           <TBody>
             {r.items.map((item) => {
-              const m2 = r.m2ByProduct.get(item.productId);
+              const m2 = m2Shown.has(item.productId) ? undefined : r.m2ByProduct.get(item.productId);
+              m2Shown.add(item.productId);
               return (
                 <TR key={item.id}>
                   <TD className="font-mono text-xs whitespace-nowrap">{item.product.code}</TD>
+                  <TD className="whitespace-nowrap font-medium">
+                    <ItemFormat item={item} />
+                  </TD>
                   <TD className="min-w-72">
                     {item.product.description || "—"}
                     {item.notes ? <p className="text-xs text-slate-500">Nota: {item.notes}</p> : null}

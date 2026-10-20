@@ -1,3 +1,5 @@
+import { isSampleFormat, type SampleFormat } from "@/lib/sample-formats";
+
 /** Conferma prima di inviare al magazzino una richiesta con contatto creato dal modulo pubblico e non ancora verificato. */
 export const CONTACT_REVIEW_CONFIRM =
   "Il contatto è stato creato dal modulo pubblico e non è ancora verificato (lingua, email, agente). Inviare comunque la richiesta al magazzino?";
@@ -9,14 +11,38 @@ export function ageLabel(days: number): string {
   return `da ${days} giorni`;
 }
 
-/** Prima riga utile dell'indirizzo + località (versione breve per le liste). */
+/**
+ * Indirizzo su una riga (versione breve per le liste). L'indirizzo di consegna non contiene più il
+ * destinatario, che sta in un campo a parte: si mostrano tutte le righe.
+ */
 export function shortAddress(address: string | null | undefined, max = 60): string {
-  const lines = (address ?? "")
+  const text = (address ?? "")
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return "";
-  // La prima riga è di solito il nome del destinatario: mostriamo le righe successive.
-  const text = (lines.length > 1 ? lines.slice(1) : lines).join(", ");
+    .filter(Boolean)
+    .join(", ");
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** Dati della consegna precompilati dal contatto scelto (modificabili nel form). */
+export type ContactPrefill = { recipientName: string; destinationAddress: string; phone: string };
+
+export const EMPTY_PREFILL: ContactPrefill = { recipientName: "", destinationAddress: "", phone: "" };
+
+/** Destinatario = nome del contatto, indirizzo = indirizzo predefinito (senza riga del nome), telefono per il preavviso. */
+export function contactPrefill(c: {
+  name: string;
+  defaultAddress?: string | null;
+  phone?: string | null;
+}): ContactPrefill {
+  return {
+    recipientName: c.name.trim(),
+    destinationAddress: c.defaultAddress?.trim() ?? "",
+    phone: c.phone?.trim() ?? "",
+  };
+}
+
+/** Formato letto dal database per il form (valori sconosciuti → da scegliere). */
+export function formatFromDb(value: string | null | undefined): SampleFormat | "" {
+  return isSampleFormat(value) ? value : "";
 }

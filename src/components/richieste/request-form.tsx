@@ -1,23 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { startTransition, useActionState, useId, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  startTransition,
+  useActionState,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import { createRequestAction, updateRequestAction } from "@/app/(app)/richieste/actions";
 import { ContactPicker } from "@/components/pickers/contact-picker";
 import type { ContactOption } from "@/components/pickers/types";
-import { ActionMessage } from "@/components/ui/alert";
+import { ActionMessage, Alert } from "@/components/ui/alert";
 import { buttonClasses, type ButtonVariant } from "@/components/ui/button";
+import { cn } from "@/components/ui/cn";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/form";
 import type { ActionResult } from "@/lib/action-result";
+import { looksLikeCompany } from "@/lib/sample-formats";
 import { ContactSummary } from "./contact-summary";
 import { ItemsEditor, ItemsReadOnly, itemsToPayload, type ItemRow } from "./items-editor";
-import { CONTACT_REVIEW_CONFIRM } from "./utils";
+import { CONTACT_REVIEW_CONFIRM, contactPrefill, EMPTY_PREFILL, type ContactPrefill } from "./utils";
 
 export type FormContact = ContactOption & { phone?: string | null; company?: string | null; active?: boolean };
 
 export type RequestFormInitial = {
   contact: FormContact | null;
+  /** Ragione sociale o cognome e nome del destinatario. */
+  recipientName: string;
+  /** «Alla c.a. di» (persona presso la ditta destinataria). */
+  attentionOf: string;
+  /** Solo l'indirizzo (via, CAP, città, provincia, paese), senza il destinatario. */
   destinationAddress: string;
+  /** Preavviso telefonico: null = non ancora indicato (nessuna scelta predefinita). */
+  phoneNotice: boolean | null;
+  phoneNoticeNumber: string;
   notes: string;
   deliveryFormRequired: boolean;
   /** YYYY-MM-DD */
@@ -26,18 +44,20 @@ export type RequestFormInitial = {
 };
 
 type State = ActionResult | null;
+type Errors = Record<string, string>;
 
 const NO_KEYS: ReadonlySet<string> = new Set();
+const NO_ERRORS: Errors = {};
 
 /** Una chiave d'errore è nascosta se il campo è stato modificato; "items." copre tutte le righe, "items.2." una sola. */
-function isDismissed(key: string, dismissed: ReadonlySet<string>): boolean {
-  if (dismissed.has(key)) return true;
-  for (const d of dismissed) if (d.endsWith(".") && key.startsWith(d)) return true;
+function isDismissed(key: string, dismissed: Iterable<string>): boolean {
+  for (const d of dismissed) if (d === key || (d.endsWith(".") && key.startsWith(d))) return true;
   return false;
 }
 
-function addressFor(c: FormContact): string {
-  return [c.name, c.defaultAddress?.trim()].filter(Boolean).join("\n");
+/** Il valore va (ri)precompilato se è vuoto o è ancora quello precompilato dal contatto precedente. */
+function untouched(value: string, previousPrefill: string): boolean {
+  return !value.trim() || value === previousPrefill;
 }
 
 function Spinner() {
@@ -53,9 +73,78 @@ function SectionTitle({ title, description }: { title: string; description?: str
   );
 }
 
+/** Sì / No senza scelta predefinita: finché non si sceglie la richiesta non può andare al magazzino. */
+function PhoneNoticeChoice({
+  id,
+  value,
+  error,
+  onChange,
+}: {
+  id: string;
+  value: boolean | null;
+  error?: string;
+  onChange: (value: boolean) => void;
+}) {
+  const descId = `${id}-desc`;
+  const options: [string, boolean, string][] = [
+    ["si", true, "Sì"],
+    ["no", false, "No"],
+  ];
+  return (
+    <fieldset className="space-y-1.5" aria-describedby={descId}>
+      <legend className="block text-sm font-medium text-slate-700">
+        Preavviso telefonico prima della consegna<span className="ml-0.5 text-red-600">*</span>
+      </legend>
+      <div className="flex gap-2">
+        {options.map(([formValue, option, label]) => {
+          const checked = value === option;
+          return (
+            <label
+              key={formValue}
+              className={cn(
+                "inline-flex h-10 min-w-20 cursor-pointer items-center gap-2 rounded-lg px-4 text-sm font-medium ring-1 ring-inset has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand-600",
+                checked
+                  ? "bg-brand-50 text-brand-900 ring-brand-600"
+                  : error
+                    ? "bg-white text-slate-700 ring-red-500 hover:bg-slate-50"
+                    : "bg-white text-slate-700 ring-slate-300 hover:bg-slate-50",
+              )}
+            >
+              <input
+                type="radio"
+                name="phoneNotice"
+                value={formValue}
+                checked={checked}
+                onChange={() => onChange(option)}
+                data-invalid={error ? true : undefined}
+                className="size-4 border-slate-300 text-brand-700 focus:ring-brand-600"
+              />
+              {label}
+            </label>
+          );
+        })}
+      </div>
+      {error ? (
+        <p id={descId} className="text-sm text-red-600" role="alert">
+          {error}
+        </p>
+      ) : (
+        <p id={descId} className="text-xs text-slate-500">
+          {value === null
+            ? "Nessuna scelta predefinita: chiedilo sempre a chi richiede i campioni."
+            : value
+              ? "Il corriere telefona al numero indicato prima di consegnare."
+              : "Consegna senza preavviso telefonico."}
+        </p>
+      )}
+    </fieldset>
+  );
+}
+
 /**
  * Form della richiesta (back office): creazione in /richieste/nuova e modifica nel dettaglio.
  * Tutti i campi sono controllati: il form non viene azzerato se il server segnala errori.
+ * Destinatario, indirizzo e telefono si precompilano dal contatto finché non vengono modificati a mano.
  */
 export function RequestForm({
   mode,
@@ -83,15 +172,24 @@ export function RequestForm({
   onSaved?: (message?: string) => void;
 }) {
   const uid = useId();
+  const formRef = useRef<HTMLFormElement>(null);
   const [contact, setContact] = useState<FormContact | null>(initial.contact);
+  // Ultimi valori precompilati dal contatto: se l'utente non li ha modificati, cambiando contatto si aggiornano.
+  const [prefilled, setPrefilled] = useState<ContactPrefill>(
+    initial.contact ? contactPrefill(initial.contact) : EMPTY_PREFILL,
+  );
+  const [recipient, setRecipient] = useState(initial.recipientName);
+  const [attentionOf, setAttentionOf] = useState(initial.attentionOf);
   const [destination, setDestination] = useState(initial.destinationAddress);
-  // Ultimo indirizzo precompilato: se l'utente non l'ha modificato, cambiando contatto lo aggiorniamo.
-  const [autoAddress, setAutoAddress] = useState(initial.contact ? addressFor(initial.contact) : "");
+  const [phoneNotice, setPhoneNotice] = useState<boolean | null>(initial.phoneNotice);
+  const [phoneNumber, setPhoneNumber] = useState(initial.phoneNoticeNumber);
   const [notes, setNotes] = useState(initial.notes);
   const [bolla, setBolla] = useState(initial.deliveryFormRequired);
   const [receivedDate, setReceivedDate] = useState(initial.receivedDate);
   const [items, setItems] = useState<ItemRow[]>(initial.items);
   const [intent, setIntent] = useState<"save" | "send">("save");
+  // Dati mancanti per «Salva e invia al magazzino», controllati prima di inviare il form.
+  const [sendErrors, setSendErrors] = useState<Errors>(NO_ERRORS);
 
   const [state, dispatch, pending] = useActionState<State, FormData>(async (prev, formData) => {
     if (mode === "create") return createRequestAction(prev, formData);
@@ -103,12 +201,23 @@ export function RequestForm({
   const [dismissed, setDismissed] = useState<{ state: State; keys: ReadonlySet<string> }>({ state: null, keys: NO_KEYS });
   const dismissedKeys = dismissed.state === state ? dismissed.keys : NO_KEYS;
   const serverErrors = (state && !state.ok ? state.fieldErrors : undefined) ?? {};
-  const errors = Object.fromEntries(Object.entries(serverErrors).filter(([key]) => !isDismissed(key, dismissedKeys)));
+  const errors: Errors = {
+    ...Object.fromEntries(Object.entries(serverErrors).filter(([key]) => !isDismissed(key, dismissedKeys))),
+    ...sendErrors,
+  };
   const allFieldErrorsFixed =
-    Boolean(state && !state.ok && state.fieldErrors) && Object.keys(serverErrors).length > 0 && Object.keys(errors).length === 0;
+    Boolean(state && !state.ok && state.fieldErrors) &&
+    Object.keys(serverErrors).length > 0 &&
+    Object.keys(errors).length === 0;
   const showSend = mode === "create" || canSendToWarehouse;
+  const sendBlocked = Object.keys(sendErrors).length > 0;
+  const attentionHint = looksLikeCompany(recipient) && !attentionOf.trim();
 
   function dismiss(...keys: string[]) {
+    setSendErrors((prev) => {
+      const rest = Object.entries(prev).filter(([key]) => !isDismissed(key, keys));
+      return rest.length === Object.keys(prev).length ? prev : rest.length ? Object.fromEntries(rest) : NO_ERRORS;
+    });
     if (!state || state.ok) return;
     setDismissed((d) => ({ state, keys: new Set([...(d.state === state ? d.keys : []), ...keys]) }));
   }
@@ -127,21 +236,72 @@ export function RequestForm({
 
   function selectContact(c: ContactOption) {
     const next: FormContact = { ...c };
-    dismiss("contactId");
+    const prefill = contactPrefill(next);
+    const keys = ["contactId"];
     setContact(next);
-    const prefill = addressFor(next);
-    if (!destination.trim() || destination === autoAddress) {
-      setDestination(prefill);
-      if (prefill.trim()) dismiss("destinationAddress");
+    if (untouched(recipient, prefilled.recipientName)) {
+      setRecipient(prefill.recipientName);
+      if (prefill.recipientName) keys.push("recipientName");
     }
-    setAutoAddress(prefill);
+    if (untouched(destination, prefilled.destinationAddress)) {
+      setDestination(prefill.destinationAddress);
+      if (prefill.destinationAddress) keys.push("destinationAddress");
+    }
+    if (untouched(phoneNumber, prefilled.phone)) {
+      setPhoneNumber(prefill.phone);
+      if (prefill.phone) keys.push("phoneNoticeNumber");
+    }
+    setPrefilled(prefill);
+    dismiss(...keys);
+  }
+
+  function choosePhoneNotice(value: boolean) {
+    setPhoneNotice(value);
+    dismiss("phoneNotice", ...(value ? [] : ["phoneNoticeNumber"]));
+    const contactPhone = contact?.phone?.trim();
+    if (value && !phoneNumber.trim() && contactPhone) {
+      setPhoneNumber(contactPhone);
+      setPrefilled((p) => ({ ...p, phone: contactPhone }));
+    }
+  }
+
+  /** Stessi controlli del passaggio a «In preparazione» (transitionProblems), riferiti ai campi del form. */
+  function missingForSend(): Errors {
+    const out: Errors = {};
+    if (!contact) out.contactId = "Seleziona il contatto";
+    if (!recipient.trim()) out.recipientName = "Indica il destinatario";
+    if (!destination.trim()) out.destinationAddress = "Indica l'indirizzo di consegna";
+    if (phoneNotice === null) out.phoneNotice = "Indica se serve il preavviso telefonico";
+    else if (phoneNotice && !phoneNumber.trim()) out.phoneNoticeNumber = "Indica il numero per il preavviso";
+    if (itemsEditable) {
+      if (items.length === 0) out.items = "Aggiungi almeno un prodotto";
+      items.forEach((row, i) => {
+        if (!row.sampleFormat) out[`items.${i}.sampleFormat`] = "Scegli il formato";
+        else if (row.sampleFormat === "ALTRO" && !row.formatNote.trim()) {
+          out[`items.${i}.formatNote`] = "Descrivi il formato richiesto";
+        }
+      });
+    }
+    return out;
   }
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
     const nextIntent = submitter?.value === "send" ? "send" : "save";
-    if (nextIntent === "send" && contact?.needsReview && !window.confirm(CONTACT_REVIEW_CONFIRM)) return;
+    if (nextIntent === "send") {
+      const missing = missingForSend();
+      if (Object.keys(missing).length > 0) {
+        setSendErrors(missing);
+        // Dopo il render: porta il focus sul primo campo da completare.
+        requestAnimationFrame(() => {
+          formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"], [data-invalid="true"]')?.focus();
+        });
+        return;
+      }
+      if (contact?.needsReview && !window.confirm(CONTACT_REVIEW_CONFIRM)) return;
+    }
+    setSendErrors(NO_ERRORS);
     const formData = new FormData(e.currentTarget);
     formData.set("intent", nextIntent);
     // In modifica la data di ricezione si invia solo se cambiata (altrimenti l'ora originale resta).
@@ -159,17 +319,18 @@ export function RequestForm({
   }
 
   const contactPickerId = `${uid}-contact`;
+  const contactPhone = contact?.phone?.trim();
   const buttonCls = (variant: ButtonVariant) => buttonClasses(variant, "lg", "w-full sm:w-auto");
 
   return (
-    <form onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} noValidate className="space-y-8">
+    <form ref={formRef} onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} noValidate className="space-y-8">
       <input type="hidden" name="contactId" value={contact?.id ?? ""} />
       <input type="hidden" name="items" value={itemsToPayload(items)} />
 
       <fieldset className="space-y-3">
         <SectionTitle
           title="Contatto"
-          description="Chi riceve i campioni e la conferma di spedizione. L'agente di riferimento va in copia."
+          description="Chi chiede i campioni e riceve la conferma di spedizione. L'agente di riferimento va in copia."
         />
         {contact ? (
           <div className="space-y-2">
@@ -198,7 +359,9 @@ export function RequestForm({
                 {errors.contactId}
               </p>
             ) : (
-              <p className="text-xs text-slate-500">Cerca per nome, azienda, email o città.</p>
+              <p className="text-xs text-slate-500">
+                Cerca per nome, azienda, email o città. Destinatario e indirizzo si precompilano dal contatto.
+              </p>
             )}
             {initial.contact ? (
               <button
@@ -223,8 +386,127 @@ export function RequestForm({
       </fieldset>
 
       <div className="border-t border-slate-100 pt-6">
+        <fieldset className="space-y-4">
+          <SectionTitle
+            title="Destinatario e consegna"
+            description="A chi e dove spedire i campioni: servono per inviare la richiesta al magazzino."
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Destinatario (ragione sociale o cognome e nome)"
+              htmlFor={`${uid}-recipient`}
+              required
+              error={errors.recipientName}
+              hint="Precompilato con il nome del contatto: modificalo se i campioni vanno a un altro destinatario."
+            >
+              <Input
+                id={`${uid}-recipient`}
+                name="recipientName"
+                maxLength={200}
+                autoComplete="off"
+                value={recipient}
+                aria-invalid={errors.recipientName ? true : undefined}
+                onChange={(e) => {
+                  dismiss("recipientName");
+                  setRecipient(e.target.value);
+                }}
+              />
+            </Field>
+            <Field
+              label="Alla c.a. di"
+              htmlFor={`${uid}-attention`}
+              error={errors.attentionOf}
+              hint={
+                attentionHint ? (
+                  <span className="font-medium text-amber-800">
+                    Il destinatario sembra una ditta: indica, se possibile, la persona a cui è destinata.
+                  </span>
+                ) : (
+                  "Se il destinatario è una ditta: nominativo della persona a cui è destinata."
+                )
+              }
+            >
+              <Input
+                id={`${uid}-attention`}
+                name="attentionOf"
+                maxLength={200}
+                autoComplete="off"
+                value={attentionOf}
+                aria-invalid={errors.attentionOf ? true : undefined}
+                onChange={(e) => {
+                  dismiss("attentionOf");
+                  setAttentionOf(e.target.value);
+                }}
+              />
+            </Field>
+          </div>
+          <Field
+            label="Indirizzo di consegna"
+            htmlFor={`${uid}-dest`}
+            required
+            error={errors.destinationAddress}
+            hint="Via, CAP, città, provincia; paese se estero. Precompilato dall'indirizzo del contatto."
+          >
+            <Textarea
+              id={`${uid}-dest`}
+              name="destinationAddress"
+              rows={3}
+              required
+              maxLength={2000}
+              autoComplete="off"
+              value={destination}
+              aria-invalid={errors.destinationAddress ? true : undefined}
+              onChange={(e) => {
+                dismiss("destinationAddress");
+                setDestination(e.target.value);
+              }}
+            />
+          </Field>
+          <div className="grid items-start gap-4 sm:grid-cols-2">
+            <PhoneNoticeChoice
+              id={`${uid}-notice`}
+              value={phoneNotice}
+              error={errors.phoneNotice}
+              onChange={choosePhoneNotice}
+            />
+            {phoneNotice ? (
+              <Field
+                label="Numero per il preavviso"
+                htmlFor={`${uid}-notice-number`}
+                required
+                error={errors.phoneNoticeNumber}
+                hint={
+                  contactPhone && phoneNumber.trim() === contactPhone
+                    ? "Telefono del contatto: modificalo se il corriere deve chiamare un altro numero."
+                    : "Il numero che il corriere deve chiamare prima della consegna."
+                }
+              >
+                <Input
+                  id={`${uid}-notice-number`}
+                  name="phoneNoticeNumber"
+                  type="tel"
+                  inputMode="tel"
+                  maxLength={50}
+                  autoComplete="off"
+                  value={phoneNumber}
+                  aria-invalid={errors.phoneNoticeNumber ? true : undefined}
+                  onChange={(e) => {
+                    dismiss("phoneNoticeNumber");
+                    setPhoneNumber(e.target.value);
+                  }}
+                />
+              </Field>
+            ) : null}
+          </div>
+        </fieldset>
+      </div>
+
+      <div className="border-t border-slate-100 pt-6">
         <fieldset className="space-y-3">
-          <SectionTitle title="Prodotti richiesti" description="Uno o più prodotti, con la quantità di campioni per ciascuno." />
+          <SectionTitle
+            title="Prodotti richiesti"
+            description="Per ogni prodotto: quantità e formato del campione (doghe intere, mezze doghe, mazzetta, pannello, espositore…)."
+          />
           {itemsEditable ? (
             <ItemsEditor items={items} onChange={changeItems} errors={errors} />
           ) : (
@@ -238,28 +520,7 @@ export function RequestForm({
 
       <div className="border-t border-slate-100 pt-6">
         <fieldset className="space-y-4">
-          <SectionTitle title="Spedizione" />
-          <Field
-            label="Indirizzo di destinazione"
-            htmlFor={`${uid}-dest`}
-            required
-            error={errors.destinationAddress}
-            hint="Precompilato dall'indirizzo del contatto: modificalo se i campioni vanno altrove."
-          >
-            <Textarea
-              id={`${uid}-dest`}
-              name="destinationAddress"
-              rows={4}
-              required
-              maxLength={2000}
-              value={destination}
-              aria-invalid={errors.destinationAddress ? true : undefined}
-              onChange={(e) => {
-                dismiss("destinationAddress");
-                setDestination(e.target.value);
-              }}
-            />
-          </Field>
+          <SectionTitle title="Altre informazioni" />
           <Checkbox
             name="deliveryFormRequired"
             checked={bolla}
@@ -305,7 +566,14 @@ export function RequestForm({
       </div>
 
       <div className="space-y-3 border-t border-slate-100 pt-6">
-        {allFieldErrorsFixed ? null : <ActionMessage state={state} />}
+        {sendBlocked ? (
+          <Alert tone="warning" title="Per inviare al magazzino mancano dei dati">
+            Completa i campi evidenziati. Con «{mode === "edit" ? "Salva modifiche" : "Salva"}» puoi salvare la richiesta
+            così com&apos;è e completarla dopo.
+          </Alert>
+        ) : allFieldErrorsFixed ? null : (
+          <ActionMessage state={state} />
+        )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
           {mode === "edit" && onCancel ? (
             <button type="button" className={buttonCls("ghost")} onClick={onCancel} disabled={pending}>

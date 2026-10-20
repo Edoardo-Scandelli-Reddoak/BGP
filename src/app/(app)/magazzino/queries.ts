@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { pieces, requestItems, sampleRequests, type RequestStatus } from "@/db/schema";
 
 /**
- * Dati della coda magazzino: una query relazionale (richiesta + contatto + prodotti richiesti)
+ * Dati della coda magazzino: una query relazionale (richiesta + contatto + prodotti richiesti nel loro formato)
  * e un'aggregazione dei pezzi misurati per tutte le richieste mostrate.
  */
 
@@ -16,12 +16,24 @@ export type WarehouseCard = {
   readyAt: Date | null;
   contactName: string;
   contactCompany: string | null;
+  /** Destinatario della spedizione (ragione sociale o cognome e nome) e «alla c.a. di». */
+  recipientName: string | null;
+  attentionOf: string | null;
+  /** Solo l'indirizzo (via, CAP, città, paese): il destinatario è in recipientName. */
   destinationAddress: string;
   notes: string | null;
   deliveryFormRequired: boolean;
   packagesCount: number | null;
   weightKg: number | null;
-  items: { id: number; quantity: number; code: string; description: string }[];
+  items: {
+    id: number;
+    quantity: number;
+    /** Formato del campione (src/lib/sample-formats.ts); null sulle richieste inserite prima che fosse obbligatorio. */
+    sampleFormat: string | null;
+    formatNote: string | null;
+    code: string;
+    description: string;
+  }[];
   /** Righe di misura, pezzi (somma quantità) e m² registrati. */
   pieceRows: number;
   piecesCount: number;
@@ -39,6 +51,8 @@ async function loadCards(status: "IN_PREPARAZIONE" | "PRONTA_RITIRO", limit?: nu
       id: true,
       status: true,
       receivedAt: true,
+      recipientName: true,
+      attentionOf: true,
       destinationAddress: true,
       notes: true,
       deliveryFormRequired: true,
@@ -48,7 +62,7 @@ async function loadCards(status: "IN_PREPARAZIONE" | "PRONTA_RITIRO", limit?: nu
     with: {
       contact: { columns: { name: true, company: true } },
       items: {
-        columns: { id: true, quantity: true },
+        columns: { id: true, quantity: true, sampleFormat: true, formatNote: true },
         with: { product: { columns: { code: true, description: true } } },
         orderBy: [asc(requestItems.id)],
       },
@@ -86,6 +100,8 @@ async function loadCards(status: "IN_PREPARAZIONE" | "PRONTA_RITIRO", limit?: nu
       readyAt: readyMs !== null && Number.isFinite(readyMs) ? new Date(readyMs) : null,
       contactName: r.contact?.name ?? "—",
       contactCompany: r.contact?.company ?? null,
+      recipientName: r.recipientName,
+      attentionOf: r.attentionOf,
       destinationAddress: r.destinationAddress,
       notes: r.notes,
       deliveryFormRequired: r.deliveryFormRequired,
@@ -94,6 +110,8 @@ async function loadCards(status: "IN_PREPARAZIONE" | "PRONTA_RITIRO", limit?: nu
       items: r.items.map((i) => ({
         id: i.id,
         quantity: i.quantity,
+        sampleFormat: i.sampleFormat,
+        formatNote: i.formatNote,
         code: i.product.code,
         description: i.product.description,
       })),

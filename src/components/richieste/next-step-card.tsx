@@ -65,6 +65,7 @@ export function NextStepCard({
   user,
   contactNeedsReview = false,
   contactHref = null,
+  attentionMissing = false,
 }: {
   requestId: number;
   status: RequestStatus;
@@ -75,6 +76,8 @@ export function NextStepCard({
   contactNeedsReview?: boolean;
   /** Scheda anagrafica del contatto, se l'utente può aprirla. */
   contactHref?: string | null;
+  /** Il destinatario sembra una ditta ma manca «alla c.a. di»: suggerimento, non blocca l'invio. */
+  attentionMissing?: boolean;
 }) {
   const next = nextStatus(status);
   const permission = transitionPermission(status);
@@ -129,6 +132,12 @@ export function NextStepCard({
           <ContactReviewNote href={contactHref}>
             Contatto da verificare: controllalo in anagrafica (lingua, email, agente) prima di inviare.
           </ContactReviewNote>
+        ) : null}
+        {canAdvance && status === "NUOVA" && attentionMissing ? (
+          <p className="rounded-lg bg-amber-50/60 px-4 py-2.5 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
+            <span className="font-medium">Suggerimento:</span> il destinatario sembra una ditta. Se possibile indica
+            «alla c.a. di» (la persona a cui sono destinati i campioni) con «Modifica»; non blocca l&apos;invio.
+          </p>
         ) : null}
         {canAdvance && PANEL_HINT[status] ? <p className="text-xs text-slate-500">{PANEL_HINT[status]}</p> : null}
 

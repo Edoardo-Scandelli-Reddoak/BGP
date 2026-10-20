@@ -6,6 +6,7 @@ import { cn } from "@/components/ui/cn";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { PhoneNoticeBadge, RecipientSummary, recipientOf } from "@/components/logistica/delivery-info";
 import { ShippingCostForm } from "@/components/logistica/shipping-cost-form";
 import { requireUser } from "@/lib/auth/session";
 import { parseEmailList } from "@/lib/email/recipients";
@@ -124,7 +125,7 @@ export default async function ShippedPage(props: PageProps<"/logistica/spedite">
                   <THead>
                     <tr>
                       <TH>Richiesta</TH>
-                      <TH>Contatto</TH>
+                      <TH>Destinatario</TH>
                       <TH>Corriere e ritiro</TH>
                       <TH>Cosa manca</TH>
                       <TH>Ultima conferma</TH>
@@ -139,7 +140,10 @@ export default async function ShippedPage(props: PageProps<"/logistica/spedite">
                           </Link>
                           {r.shippedAt ? <p className="text-xs text-slate-500">{markedShippedLabel(r)}</p> : null}
                         </TD>
-                        <TD className="min-w-40 font-medium text-slate-900">{r.contactName}</TD>
+                        <TD className="max-w-xs min-w-48">
+                          <RecipientSummary r={r} contactName={r.contactName} />
+                          <PhoneNoticeBadge phoneNotice={r.phoneNotice} number={r.phoneNoticeNumber} className="mt-1.5" />
+                        </TD>
                         <TD className="whitespace-nowrap">
                           <p>{r.carrierName ?? "—"}</p>
                           {r.pickupDate ? <p className="text-xs text-slate-500">Ritiro il {formatDate(r.pickupDate)}</p> : null}
@@ -161,7 +165,11 @@ export default async function ShippedPage(props: PageProps<"/logistica/spedite">
                   <li key={r.id}>
                     <Link href={`/richieste/${r.id}`} className="block px-4 py-4 active:bg-slate-100">
                       <p className="font-mono text-sm font-semibold text-brand-700">{requestCode(r.id)}</p>
-                      <p className="mt-0.5 truncate font-medium text-slate-900">{r.contactName}</p>
+                      <p className="mt-0.5 truncate font-medium text-slate-900">{recipientOf(r, r.contactName)}</p>
+                      {r.attentionOf?.trim() ? (
+                        <p className="truncate text-xs text-slate-700">Alla c.a. {r.attentionOf.trim()}</p>
+                      ) : null}
+                      <PhoneNoticeBadge phoneNotice={r.phoneNotice} number={r.phoneNoticeNumber} className="mt-1.5" />
                       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
                         <span>
                           <span className="font-medium text-slate-800">{r.carrierName ?? "Corriere non indicato"}</span>

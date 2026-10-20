@@ -13,7 +13,11 @@ export const EMAIL_KIND_LABELS: Record<EmailKind, string> = {
   CONFERMA_SPEDIZIONE: "Conferma di spedizione al cliente",
   AVVISO_BOLLA: "Avviso bolla di consegna alla logistica",
   TEST: "Email di prova",
+  EXPORT_CRM: "Export m² per il CRM",
 };
+
+/** Email legate a una richiesta, con template modificabile. */
+export type RequestEmailKind = Exclude<EmailKind, "TEST" | "EXPORT_CRM">;
 
 export const EMAIL_KIND_DESCRIPTIONS: Record<EmailKind, string> = {
   AVVISO_MAGAZZINO:
@@ -23,10 +27,11 @@ export const EMAIL_KIND_DESCRIPTIONS: Record<EmailKind, string> = {
   AVVISO_BOLLA:
     "Parte quando una richiesta con «bolla di consegna richiesta» diventa «Pronta per il ritiro», o quando la bolla viene richiesta su una richiesta già pronta. Destinatari: indirizzi della logistica nelle impostazioni.",
   TEST: "Email di prova inviata dalle impostazioni.",
+  EXPORT_CRM: "Invio mensile automatico (o «Invia ora») del file dei m² ai destinatari configurati in Impostazioni → Export CRM.",
 };
 
 /** Le email interne sono solo in italiano; la conferma al cliente in tutte le lingue. */
-export const TEMPLATE_LANGUAGES: Record<Exclude<EmailKind, "TEST">, Language[]> = {
+export const TEMPLATE_LANGUAGES: Record<RequestEmailKind, Language[]> = {
   AVVISO_MAGAZZINO: ["it"],
   AVVISO_BOLLA: ["it"],
   CONFERMA_SPEDIZIONE: ["it", "en", "fr", "de"],
@@ -87,7 +92,7 @@ export const PLACEHOLDERS: { key: keyof TemplateVars; label: string }[] = [
 export type TemplateContent = { subject: string; body: string };
 
 export const DEFAULT_TEMPLATES: Record<
-  Exclude<EmailKind, "TEST">,
+  RequestEmailKind,
   Partial<Record<Language, TemplateContent>>
 > = {
   AVVISO_MAGAZZINO: {

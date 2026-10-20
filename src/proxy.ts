@@ -5,7 +5,7 @@ import { SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth/constants";
  * Controllo "ottimistico": senza cookie di sessione si va al login.
  * La verifica vera (sessione valida, ruolo, permessi) avviene nelle pagine e nelle server action.
  */
-const PUBLIC_PREFIXES = ["/login", "/richiedi-campioni", "/api/public", "/email/", "/_next", "/favicon"];
+const PUBLIC_PREFIXES = ["/login", "/richiedi-campioni", "/api/public", "/api/cron/", "/email/", "/_next", "/favicon"];
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;

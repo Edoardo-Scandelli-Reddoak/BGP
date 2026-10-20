@@ -16,6 +16,13 @@ function parseItems(value: FormDataEntryValue | null): unknown {
   }
 }
 
+/** Radio «Preavviso telefonico» Sì/No: nessuna scelta → undefined (campo obbligatorio). */
+function parseYesNo(value: FormDataEntryValue | null): boolean | undefined {
+  if (value === "SI") return true;
+  if (value === "NO") return false;
+  return undefined;
+}
+
 /** Invio del modulo pubblico (senza login): validazione, limiti e salvataggio in src/lib/requests/public.ts. */
 export async function submitPublicRequest(
   _prev: ActionResult<PublicRequestResult> | null,
@@ -32,10 +39,14 @@ export async function submitPublicRequest(
       requesterEmail: text("requesterEmail"),
       requesterPhone: text("requesterPhone"),
       recipientName: text("recipientName"),
+      recipientIsPrivate: fd.get("recipientIsPrivate") === "on",
+      attentionOf: fd.get("recipientIsPrivate") === "on" ? undefined : text("attentionOf"),
       recipientEmail: text("requesterType") === "AGENTE" ? text("recipientEmail") : undefined,
       address: text("address"),
       country: text("country"),
       language: text("language"),
+      phoneNotice: parseYesNo(fd.get("phoneNotice")),
+      phoneNoticeNumber: fd.get("phoneNotice") === "SI" ? text("phoneNoticeNumber") : undefined,
       notes: text("notes"),
       items: parseItems(fd.get("items")),
       consent: fd.get("consent") === "on",

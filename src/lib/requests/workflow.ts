@@ -1,4 +1,5 @@
 import type { RequestStatus } from "@/db/schema";
+import { bollaSatisfiedForMode, type BollaMode } from "@/lib/config/bolla";
 import type { Permission } from "@/lib/roles";
 import { nextStatus } from "@/lib/status";
 
@@ -29,6 +30,10 @@ export type WorkflowSnapshot = {
   pickupDate: string | null;
   ddtNumber: string | null;
   hasDdtAttachment: boolean;
+  /** Numero della bolla generata dal sistema (null se non generata). */
+  bollaNumber?: string | null;
+  /** Modalità della bolla configurata da BGP (predefinita: entrambe). */
+  bollaMode?: BollaMode;
   trackingNumber: string | null;
   shipmentDate: string | null;
   notificationSentAt: Date | null;
@@ -65,9 +70,23 @@ export const ADVANCE_LABELS: Partial<Record<RequestStatus, string>> = {
  * Bolla a posto: non richiesta, oppure «bolla pronta», numero DDT o DDT caricato.
  * La stessa regola è in SQL nel conteggio delle bolle da preparare (countByStatus in service.ts).
  */
-export function bollaSatisfied(s: Pick<WorkflowSnapshot, "deliveryFormRequired" | "deliveryFormReady" | "ddtNumber" | "hasDdtAttachment">): boolean {
-  if (!s.deliveryFormRequired) return true;
-  return s.deliveryFormReady || Boolean(s.ddtNumber?.trim()) || s.hasDdtAttachment;
+export function bollaSatisfied(
+  s: Pick<WorkflowSnapshot, "deliveryFormRequired" | "deliveryFormReady" | "ddtNumber" | "hasDdtAttachment"> &
+    Partial<Pick<WorkflowSnapshot, "bollaNumber" | "bollaMode">>,
+): boolean {
+  return bollaSatisfiedForMode({ ...s, bollaNumber: s.bollaNumber ?? null }, s.bollaMode ?? "ENTRAMBE");
+}
+
+/** Cosa fare per preparare la bolla, secondo la modalità configurata. */
+export function bollaTodo(mode: BollaMode = "ENTRAMBE"): string {
+  switch (mode) {
+    case "GENERATA":
+      return "Bolla di consegna richiesta: generala dal pannello Spedizione.";
+    case "GESTIONALE":
+      return "Bolla di consegna richiesta: inserisci il numero del DDT del gestionale o carica il file.";
+    default:
+      return "Bolla di consegna richiesta: generala o inserisci il DDT del gestionale (numero o file).";
+  }
 }
 
 /**
@@ -112,9 +131,7 @@ export function transitionProblems(
     case "SPEDITA":
       if (!s.carrierId) problems.push("Seleziona il corriere.");
       if (!s.pickupDate) problems.push("Indica la data di ritiro.");
-      if (!bollaSatisfied(s)) {
-        problems.push("Bolla di consegna richiesta: preparala (numero DDT, file caricato o «bolla pronta»).");
-      }
+      if (!bollaSatisfied(s)) problems.push(bollaTodo(s.bollaMode));
       break;
     case "COMPLETATA":
       problems.push("La richiesta si completa automaticamente quando parte la conferma di spedizione.");

@@ -2,6 +2,9 @@ import "server-only";
 import { inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { settings } from "@/db/schema";
+import { DEFAULT_BOLLA_CONFIG, type BollaConfig } from "@/lib/config/bolla";
+import { DEFAULT_COST_CONFIG, type CostConfig } from "@/lib/config/costs";
+import { DEFAULT_CRM_EXPORT_CONFIG, type CrmExportConfig } from "@/lib/config/crm-export";
 
 /** Tutte le impostazioni modificabili dall'amministratore, con i valori predefiniti. */
 export type AppSettings = {
@@ -31,6 +34,12 @@ export type AppSettings = {
   publicFormEnabled: boolean;
   /** Testo introduttivo del modulo pubblico. */
   publicFormIntro: string;
+  /** Voci dei «costi per cliente» (Impostazioni → Costi). */
+  costConfig: CostConfig;
+  /** Modalità, numerazione e regole della bolla di consegna (Impostazioni → Bolla di consegna). */
+  bollaConfig: BollaConfig;
+  /** Export dei m² verso il CRM (Impostazioni → Export CRM). */
+  crmExport: CrmExportConfig;
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -52,7 +61,29 @@ export const DEFAULT_SETTINGS: AppSettings = {
   publicFormEnabled: true,
   publicFormIntro:
     "Compila il modulo per richiedere i campioni BGP. Il nostro ufficio verificherà la richiesta e riceverai un'email quando i campioni saranno spediti.",
+  costConfig: DEFAULT_COST_CONFIG,
+  bollaConfig: DEFAULT_BOLLA_CONFIG,
+  crmExport: DEFAULT_CRM_EXPORT_CONFIG,
 };
+
+/**
+ * Le configurazioni strutturate salvate in passato possono non avere le chiavi aggiunte dopo:
+ * si completano con i valori predefiniti (un livello di profondità basta per le strutture attuali).
+ */
+function withDefaults<T>(stored: unknown, defaults: T): T {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored) || typeof defaults !== "object" || defaults === null || Array.isArray(defaults)) {
+    return (stored as T) ?? defaults;
+  }
+  const out: Record<string, unknown> = { ...(defaults as Record<string, unknown>) };
+  for (const [k, v] of Object.entries(stored as Record<string, unknown>)) {
+    const d = (defaults as Record<string, unknown>)[k];
+    out[k] =
+      d && typeof d === "object" && !Array.isArray(d) && v && typeof v === "object" && !Array.isArray(v)
+        ? { ...(d as object), ...(v as object) }
+        : v;
+  }
+  return out as T;
+}
 
 export type SettingKey = keyof AppSettings;
 
@@ -61,7 +92,8 @@ export async function getSettings(): Promise<AppSettings> {
   const out: AppSettings = { ...DEFAULT_SETTINGS };
   for (const row of rows) {
     if (row.key in DEFAULT_SETTINGS) {
-      (out as Record<string, unknown>)[row.key] = row.value;
+      const key = row.key as SettingKey;
+      (out as Record<string, unknown>)[key] = withDefaults(row.value, DEFAULT_SETTINGS[key]);
     }
   }
   return out;
@@ -69,7 +101,7 @@ export async function getSettings(): Promise<AppSettings> {
 
 export async function getSetting<K extends SettingKey>(key: K): Promise<AppSettings[K]> {
   const rows = await db.select().from(settings).where(inArray(settings.key, [key]));
-  return (rows[0]?.value as AppSettings[K] | undefined) ?? DEFAULT_SETTINGS[key];
+  return rows[0] ? withDefaults(rows[0].value, DEFAULT_SETTINGS[key]) : DEFAULT_SETTINGS[key];
 }
 
 export async function updateSettings(patch: Partial<AppSettings>): Promise<void> {

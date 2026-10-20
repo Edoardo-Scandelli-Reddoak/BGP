@@ -11,6 +11,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { requireUser } from "@/lib/auth/session";
 import { trackingUrl } from "@/lib/email/notifications";
 import { formatDate, formatEuro, formatKg, formatM2, requestCode } from "@/lib/format";
+import { historyProductsText } from "@/lib/reports/exports";
 import { getHistoryFilterOptions, getHistoryPage, HISTORY_PAGE_SIZE } from "@/lib/reports/history";
 import {
   hasActiveFilters,
@@ -87,13 +88,13 @@ export default async function HistoryPage(props: PageProps<"/direzione/storico">
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="f-contatto">Contatto</Label>
+                <Label htmlFor="f-contatto">Contatto o destinatario</Label>
                 <Input
                   id="f-contatto"
                   type="search"
                   name="contatto"
                   defaultValue={filters.contatto}
-                  placeholder="Nome, azienda o email"
+                  placeholder="Nome, azienda, email o destinatario"
                   maxLength={100}
                 />
               </div>
@@ -220,6 +221,7 @@ export default async function HistoryPage(props: PageProps<"/direzione/storico">
                     <TH>Ricevuta</TH>
                     <TH>Stato</TH>
                     <TH>Contatto</TH>
+                    <TH>Destinatario</TH>
                     <TH>Agente</TH>
                     <TH>Paese</TH>
                     <TH>Prodotti</TH>
@@ -234,7 +236,8 @@ export default async function HistoryPage(props: PageProps<"/direzione/storico">
                 </THead>
                 <TBody>
                   {rows.map((r) => {
-                    const codes = r.productCodes ? r.productCodes.split(", ") : [];
+                    // stesso prodotto in due formati: il codice compare una volta, il dettaglio nel tooltip
+                    const codes = [...new Set(r.productItems.map((i) => i.code))];
                     const trackHref = trackingUrl(r.carrierTrackingUrl, r.trackingNumber);
                     return (
                       <TR key={r.id}>
@@ -251,9 +254,15 @@ export default async function HistoryPage(props: PageProps<"/direzione/storico">
                           <StatusBadge status={r.status} />
                         </TD>
                         <TD className="min-w-48">{r.contactName}</TD>
+                        <TD className="min-w-48">
+                          {r.recipientName || DASH}
+                          {r.attentionOf ? (
+                            <span className="block text-xs text-slate-500">c.a. {r.attentionOf}</span>
+                          ) : null}
+                        </TD>
                         <TD className="min-w-40 text-slate-600">{r.agentName ?? <span className="text-slate-400">Direzionale</span>}</TD>
                         <TD className="whitespace-nowrap">{r.country || DASH}</TD>
-                        <TD className="min-w-32 font-mono text-xs" title={r.productCodes ?? undefined}>
+                        <TD className="min-w-32 font-mono text-xs" title={historyProductsText(r.productItems) || undefined}>
                           {codes.length === 0
                             ? DASH
                             : codes.slice(0, MAX_CODES).join(", ")}

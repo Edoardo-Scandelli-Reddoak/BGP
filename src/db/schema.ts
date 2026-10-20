@@ -51,6 +51,7 @@ export const emailKindEnum = pgEnum("email_kind", [
   "CONFERMA_SPEDIZIONE",
   "AVVISO_BOLLA",
   "TEST",
+  "EXPORT_CRM",
 ]);
 
 export const emailStatusEnum = pgEnum("email_status", ["INVIATA", "ERRORE", "SIMULATA"]);
@@ -154,6 +155,8 @@ export const products = pgTable(
     format: text("format"),
     finish: text("finish"),
     unitWeightKg: numeric("unit_weight_kg", { precision: 10, scale: 3, mode: "number" }),
+    /** Prezzo al m² per il valore dei campioni nei «costi per cliente» (facoltativo). */
+    pricePerM2: numeric("price_per_m2", { precision: 10, scale: 2, mode: "number" }),
     /** Disattivare per nascondere i prodotti fuori catalogo dai moduli di richiesta. */
     active: boolean("active").notNull().default(true),
     ...timestamps,
@@ -194,6 +197,8 @@ export const sampleRequests = pgTable(
     attentionOf: text("attention_of"),
     /** Indirizzo di consegna (via, CAP, città, provincia e paese se estero), senza il destinatario. */
     destinationAddress: text("destination_address").notNull().default(""),
+    /** Paese di consegna (per le regole della bolla e i report); null = non indicato. */
+    destinationCountry: text("destination_country"),
     /** Preavviso telefonico prima della consegna: null = non ancora indicato. */
     phoneNotice: boolean("phone_notice"),
     /** Numero da usare per il preavviso telefonico. */
@@ -218,6 +223,13 @@ export const sampleRequests = pgTable(
     pickupDate: date("pickup_date", { mode: "string" }),
     trackingNumber: text("tracking_number"),
     shipmentDate: date("shipment_date", { mode: "string" }),
+    /** Motivo per cui le regole della bolla l'hanno resa obbligatoria (null = scelta manuale). */
+    deliveryFormAutoReason: text("delivery_form_auto_reason"),
+    /** Numero della bolla generata dal sistema (numerazione propria, Impostazioni → Bolla). */
+    bollaNumber: text("bolla_number"),
+    bollaGeneratedAt: timestamp("bolla_generated_at", { withTimezone: true }),
+    /** Importi delle voci di costo manuali (Impostazioni → Costi), per chiave. */
+    extraCosts: jsonb("extra_costs").$type<Record<string, number>>(),
     /** La logistica conferma di aver preparato la bolla di consegna (se richiesta). */
     deliveryFormReady: boolean("delivery_form_ready").notNull().default(false),
     /** Numero del DDT / bolla (es. quello del gestionale BGP "13807"). */
@@ -363,6 +375,26 @@ export const emailLog = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("email_log_request_idx").on(t.requestId), index("email_log_created_idx").on(t.createdAt)],
+);
+
+/** Contatore annuale della numerazione delle bolle generate dal sistema. */
+export const bollaCounters = pgTable("bolla_counters", {
+  year: integer("year").primaryKey(),
+  lastNumber: integer("last_number").notNull().default(0),
+});
+
+/** Esecuzioni delle attività programmate (es. export CRM mensile): una sola per periodo. */
+export const scheduledRuns = pgTable(
+  "scheduled_runs",
+  {
+    id: serial("id").primaryKey(),
+    job: text("job").notNull(),
+    period: text("period").notNull(),
+    status: text("status").notNull(),
+    detail: text("detail"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("scheduled_runs_job_period_unique").on(t.job, t.period)],
 );
 
 /** Impostazioni chiave/valore (destinatari interni, mittente, firma, dati azienda per la bolla...). */

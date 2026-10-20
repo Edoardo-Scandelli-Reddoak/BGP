@@ -87,13 +87,15 @@ export function suggestSampleFormat(code: string, description: string): SampleFo
   const d = description.toLowerCase();
   if (c.startsWith("MAZZ") || d.startsWith("mazzetta")) return "MAZZETTA";
   if (c.startsWith("PAN") || d.startsWith("pannell")) return "PANNELLO";
-  if (d.includes("espositor")) return "ESPOSITORE_COMPLETO";
+  // Solo gli espositori veri: le «Doghe … per Espositore» (codici DESP…) sono doghe.
+  if (d.startsWith("espositor") || (c.startsWith("ESP") && !d.startsWith("dogh"))) return "ESPOSITORE_COMPLETO";
   return null;
 }
 
 /** Ragione sociale di una ditta (per ricordare di indicare «alla c.a.» di chi). */
 export function looksLikeCompany(name: string | null | undefined): boolean {
-  return /\b(s\.?\s?r\.?\s?l|s\.?\s?p\.?\s?a|s\.?\s?n\.?\s?c|s\.?\s?a\.?\s?s|srls|soc\.?|societ[aà]|gmbh|ag|sarl|sas|sasu|sa|bv|d\.?o\.?o|ltd|llc|inc|group|studio|spa|snc|sagl|s\.?a\.?g\.?l)\b\.?/i.test(
+  // Confini di parola Unicode (\b non riconosce le lettere accentate: «Società»).
+  return /(?<![\p{L}\p{N}])(s\.?\s?r\.?\s?l|s\.?\s?p\.?\s?a|s\.?\s?n\.?\s?c|s\.?\s?a\.?\s?s|srls|soc\.?|societ[aà]|gmbh|ag|sarl|sas|sasu|sa|bv|d\.?o\.?o|ltd|llc|inc|group|studio|spa|snc|sagl|s\.?a\.?g\.?l)(?![\p{L}\p{N}])\.?/iu.test(
     name ?? "",
   );
 }

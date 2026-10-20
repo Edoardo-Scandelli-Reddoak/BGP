@@ -31,9 +31,12 @@ function buildConditions(f: HistoryFilters): SQL | undefined {
   if (f.origine) conds.push(eq(sampleRequests.source, f.origine));
 
   if (f.contatto) {
+    // anche il destinatario: le richieste degli agenti sono spesso per un loro cliente
     for (const w of words(f.contatto)) {
       const p = likePattern(w);
-      conds.push(or(ilike(contacts.name, p), ilike(contacts.company, p), ilike(contacts.email, p))!);
+      conds.push(
+        or(ilike(contacts.name, p), ilike(contacts.company, p), ilike(contacts.email, p), ilike(sampleRequests.recipientName, p))!,
+      );
     }
   }
 
@@ -64,10 +67,21 @@ function buildConditions(f: HistoryFilters): SQL | undefined {
   return conds.length ? and(...conds) : undefined;
 }
 
-const productCodes = sql<string | null>`(
-  select string_agg(pr.code, ', ' order by ri.id)
+/** Riga richiesta: codice prodotto e formato del campione (valori di src/lib/sample-formats.ts). */
+export type HistoryProductItem = { code: string; format: string | null; note: string | null };
+
+function parseProductItems(value: unknown): HistoryProductItem[] {
+  const list: unknown = typeof value === "string" ? JSON.parse(value) : value;
+  return Array.isArray(list) ? (list as HistoryProductItem[]) : [];
+}
+
+/** Prodotti nell'ordine di inserimento, con il formato (lo stesso prodotto può comparire in due formati). */
+const productItems = sql<HistoryProductItem[]>`(
+  select coalesce(
+    json_agg(json_build_object('code', pr.code, 'format', ri.sample_format, 'note', ri.format_note) order by ri.id),
+    '[]'::json)
   from request_items ri join products pr on pr.id = ri.product_id
-  where ri.request_id = ${sampleRequests.id})`;
+  where ri.request_id = ${sampleRequests.id})`.mapWith(parseProductItems);
 
 const totalM2 = sql<number>`(
   select coalesce(sum(pc.area_m2), 0)::float8 from pieces pc where pc.request_id = ${sampleRequests.id})`.mapWith(Number);
@@ -82,9 +96,11 @@ const historyColumns = {
   source: sampleRequests.source,
   contactId: contacts.id,
   contactName: contacts.name,
+  recipientName: sampleRequests.recipientName,
+  attentionOf: sampleRequests.attentionOf,
   country: contacts.country,
   agentName: agent.name,
-  productCodes,
+  productItems,
   packagesCount: sampleRequests.packagesCount,
   weightKg: sampleRequests.weightKg,
   m2: totalM2,

@@ -1,6 +1,8 @@
 /**
  * SOLO SVILUPPO / DEMO: crea un utente per ruolo e ~45 richieste in tutti gli stati,
- * usando i contatti e i prodotti già importati. Non invia email.
+ * usando i contatti e i prodotti già importati. Non invia email. Le richieste hanno i dati per la
+ * presa in carico (destinatario, alla c.a., formato, preavviso); una «Nuova richiesta» resta
+ * incompleta per mostrare cosa blocca l'invio al magazzino.
  *   npm run db:seed-demo
  * Password degli utenti demo: DEMO_PASSWORD (default "demo-campioni-2026").
  */
@@ -22,6 +24,7 @@ import {
   type Role,
 } from "@/db/schema";
 import { hashPassword } from "@/lib/auth/password";
+import { looksLikeCompany, suggestSampleFormat, type SampleFormat } from "@/lib/sample-formats";
 
 if (process.env.NODE_ENV === "production") {
   console.error("seed-demo non va eseguito in produzione.");
@@ -48,6 +51,25 @@ function rand(): number {
 }
 const pick = <T,>(arr: T[]): T => arr[Math.floor(rand() * arr.length)];
 const between = (a: number, b: number) => a + Math.floor(rand() * (b - a + 1));
+
+/** Persona presso la ditta destinataria («alla c.a. di»). */
+const ATTENTION_OF = ["Sig. Rossi", "Sig.ra Bianchi", "Arch. Colombo", "Geom. Ferrari", "Uff. acquisti — Sig.ra Galli"];
+
+/** Numero per il preavviso telefonico: quello del contatto, se c'è, altrimenti un cellulare di prova. */
+function phoneFor(contact: { phone: string | null }): string {
+  return contact.phone?.trim() || `3${between(20, 49)} ${between(1000000, 9999999)}`;
+}
+
+/** Formato del campione: dal codice (MAZZ… mazzetta, PAN… pannello), per le doghe intere o mezze. */
+function formatFor(product: { code: string; description: string }): {
+  sampleFormat: SampleFormat | null;
+  formatNote: string | null;
+} {
+  const suggested = suggestSampleFormat(product.code, product.description);
+  if (suggested) return { sampleFormat: suggested, formatNote: null };
+  if (rand() < 0.05) return { sampleFormat: "ALTRO", formatNote: "listello tagliato a 30 cm" };
+  return { sampleFormat: rand() < 0.5 ? "DOGHE_INTERE" : "MEZZE_DOGHE", formatNote: null };
+}
 
 function addDays(d: Date, days: number): Date {
   return new Date(d.getTime() + days * 86400000);
@@ -123,6 +145,7 @@ async function main() {
     COMPLETATA: null,
   };
 
+  let drafts = 0;
   for (const [n, p] of plan.entries()) {
     const contact = pick(customers);
     const received = addDays(today, -p.daysAgo);
@@ -133,6 +156,12 @@ async function main() {
     const pickup = addDays(received, between(1, 3));
     const shipped = pickup;
     const carrier = rand() < 0.75 ? gls : brt;
+    const attentionOf = looksLikeCompany(contact.name) && rand() < 0.5 ? pick(ATTENTION_OF) : null;
+    const phoneNotice = rand() < 0.35;
+    const items = chosen.map((prod) => ({ prod, ...formatFor(prod) }));
+    // Una bozza «Nuova richiesta» incompleta (preavviso e un formato da indicare): mostra cosa blocca l'invio.
+    const draft = p.status === "NUOVA" && drafts++ === 1;
+    if (draft) items[items.length - 1] = { ...items[items.length - 1], sampleFormat: null, formatNote: null };
 
     const [req] = await db
       .insert(sampleRequests)
@@ -141,8 +170,13 @@ async function main() {
         receivedAt: received,
         source: n % 7 === 0 ? "MODULO_PUBBLICO" : "INTERNO",
         contactId: contact.id,
-        destinationAddress: `${contact.name}\n${contact.defaultAddress}`,
-        notes: rand() < 0.3 ? pick(["Preavviso telefonico 1 giorno prima", "Consegna orario continuato 9-18", "Urgente per showroom"]) : null,
+        // dati richiesti da BGP: destinatario, alla c.a., indirizzo (senza il destinatario), preavviso
+        recipientName: contact.name,
+        attentionOf,
+        destinationAddress: contact.defaultAddress ?? "",
+        phoneNotice: draft ? null : phoneNotice,
+        phoneNoticeNumber: !draft && phoneNotice ? phoneFor(contact) : null,
+        notes: rand() < 0.3 ? pick(["Consegna solo al mattino", "Consegna orario continuato 9-18", "Urgente per showroom"]) : null,
         deliveryFormRequired: bolla,
         createdById: userIds.BACKOFFICE,
         requesterName: n % 7 === 0 ? "Agente (modulo pubblico)" : null,
@@ -160,7 +194,15 @@ async function main() {
       })
       .returning({ id: sampleRequests.id });
 
-    await db.insert(requestItems).values(chosen.map((prod) => ({ requestId: req.id, productId: prod.id, quantity: between(1, 3) })));
+    await db.insert(requestItems).values(
+      items.map(({ prod, sampleFormat, formatNote }) => ({
+        requestId: req.id,
+        productId: prod.id,
+        quantity: between(1, 3),
+        sampleFormat,
+        formatNote,
+      })),
+    );
 
     if (stage >= 2) {
       for (const prod of chosen) {

@@ -5,14 +5,50 @@ import { DetailItem } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { formatM2 } from "@/lib/format";
 import type { RequestDetail } from "@/lib/requests/queries";
+import { EDITABLE_IN } from "@/lib/requests/workflow";
+import { looksLikeCompany, sampleFormatText } from "@/lib/sample-formats";
 import { ContactSummary } from "./contact-summary";
 
-/** Contenuto in sola lettura del pannello «Richiesta» (contatto, destinazione, note, prodotti). */
+/**
+ * Dato richiesto da BGP ma non indicato: evidenziato finché si può ancora completare con «Modifica»,
+ * neutro nelle richieste ormai spedite (es. quelle inserite prima che il dato fosse richiesto).
+ */
+function ToBeProvided({ editable, children = "Da indicare" }: { editable: boolean; children?: string }) {
+  return editable ? (
+    <span className="font-medium text-amber-800">{children}</span>
+  ) : (
+    <span className="text-slate-400">Non indicato</span>
+  );
+}
+
+function PhoneNotice({ request, editable }: { request: RequestDetail; editable: boolean }) {
+  if (request.phoneNotice === null) return <ToBeProvided editable={editable} />;
+  if (!request.phoneNotice) return <span className="text-slate-600">No</span>;
+  const number = request.phoneNoticeNumber?.trim();
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <Badge tone="blue">Sì</Badge>
+      {number ? (
+        <span className="font-medium tabular-nums">Tel. {number}</span>
+      ) : (
+        <ToBeProvided editable={editable}>Numero da indicare</ToBeProvided>
+      )}
+    </span>
+  );
+}
+
+/** Contenuto in sola lettura del pannello «Richiesta» (contatto, destinatario e consegna, note, prodotti). */
 export function RequestInfoView({ request, canViewRegistry }: { request: RequestDetail; canViewRegistry: boolean }) {
   const { contact } = request;
   const contactHref = canViewRegistry ? `/anagrafiche/contatti/${contact.id}` : null;
   const hasPieces = request.pieces.length > 0;
   const totalQty = request.items.reduce((sum, i) => sum + i.quantity, 0);
+  const infoEditable = EDITABLE_IN.info.includes(request.status);
+  const itemsEditable = EDITABLE_IN.items.includes(request.status);
+  const recipient = request.recipientName?.trim();
+  const attention = request.attentionOf?.trim();
+  // I m² sono misurati per prodotto: con lo stesso prodotto in più formati si mostrano sulla prima riga.
+  const m2Shown = new Set<number>();
 
   return (
     <div className="space-y-6">
@@ -32,7 +68,7 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <div>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Contatto</h3>
+          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Contatto (richiedente)</h3>
           <ContactSummary
             href={contactHref}
             contact={{
@@ -52,8 +88,25 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
           />
         </div>
         <dl className="space-y-4">
-          <DetailItem label="Indirizzo di destinazione">
-            {request.destinationAddress ? <span className="whitespace-pre-line">{request.destinationAddress}</span> : null}
+          <DetailItem label="Destinatario">
+            {recipient ? <span className="font-medium">{recipient}</span> : <ToBeProvided editable={infoEditable} />}
+          </DetailItem>
+          <DetailItem label="Alla c.a. di">
+            {attention ? (
+              attention
+            ) : infoEditable && looksLikeCompany(recipient) ? (
+              <span className="text-amber-800">Non indicato: il destinatario sembra una ditta</span>
+            ) : null}
+          </DetailItem>
+          <DetailItem label="Indirizzo di consegna">
+            {request.destinationAddress.trim() ? (
+              <span className="whitespace-pre-line">{request.destinationAddress}</span>
+            ) : (
+              <ToBeProvided editable={infoEditable} />
+            )}
+          </DetailItem>
+          <DetailItem label="Preavviso telefonico">
+            <PhoneNotice request={request} editable={infoEditable} />
           </DetailItem>
           <DetailItem label="Bolla di consegna">
             {request.deliveryFormRequired ? (
@@ -88,6 +141,7 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
                 <tr>
                   <TH>Codice</TH>
                   <TH>Descrizione</TH>
+                  <TH>Formato</TH>
                   <TH className="text-right">Q.tà</TH>
                   <TH>Note</TH>
                   <TH className="text-right">m² misurati</TH>
@@ -95,7 +149,10 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
               </THead>
               <TBody>
                 {request.items.map((item) => {
-                  const m2 = request.m2ByProduct.get(item.productId);
+                  const repeated = m2Shown.has(item.productId);
+                  m2Shown.add(item.productId);
+                  const m2 = repeated ? undefined : request.m2ByProduct.get(item.productId);
+                  const format = sampleFormatText(item.sampleFormat, item.formatNote);
                   return (
                     <TR key={item.id}>
                       <TD className="font-mono text-sm font-semibold whitespace-nowrap text-brand-800">{item.product.code}</TD>
@@ -104,10 +161,17 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
                           {item.product.description || "—"}
                         </span>
                       </TD>
+                      <TD className="min-w-32">{format || <ToBeProvided editable={itemsEditable} />}</TD>
                       <TD className="text-right font-medium tabular-nums">{item.quantity}</TD>
                       <TD className="text-slate-600">{item.notes || <span className="text-slate-400">—</span>}</TD>
                       <TD className="text-right whitespace-nowrap tabular-nums">
-                        {m2 !== undefined ? formatM2(m2) : <span className="text-slate-400">—</span>}
+                        {m2 !== undefined ? (
+                          formatM2(m2)
+                        ) : repeated ? (
+                          <span className="text-xs text-slate-400">vedi sopra</span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
                       </TD>
                     </TR>
                   );
@@ -115,7 +179,7 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
               </TBody>
               <tfoot className="bg-slate-50 text-sm">
                 <tr>
-                  <td className="px-4 py-2.5 font-medium text-slate-700" colSpan={2}>
+                  <td className="px-4 py-2.5 font-medium text-slate-700" colSpan={3}>
                     Totale
                   </td>
                   <td className="px-4 py-2.5 text-right font-semibold tabular-nums">{totalQty}</td>

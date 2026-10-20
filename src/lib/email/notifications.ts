@@ -16,7 +16,7 @@ import {
   renderTemplate,
   textToHtml,
   type TemplateContent,
-  type TemplateVars,
+  type TemplateVars, type RequestEmailKind,
 } from "./templates";
 
 /** Content-ID dell'immagine della firma nelle email HTML. */
@@ -100,7 +100,7 @@ export function buildTemplateVars(
 }
 
 /** Template salvato nel DB, altrimenti quello predefinito; se manca la lingua si usa l'italiano. */
-export async function loadTemplate(kind: Exclude<EmailKind, "TEST">, lang: Language): Promise<TemplateContent> {
+export async function loadTemplate(kind: RequestEmailKind, lang: Language): Promise<TemplateContent> {
   for (const l of lang === "it" ? (["it"] as Language[]) : [lang, "it" as Language]) {
     const rows = await db
       .select()
@@ -180,7 +180,7 @@ export type NotificationResult = {
  * Non lancia eccezioni per errori SMTP: l'esito è nel risultato e nel registro.
  */
 export async function sendRequestNotification(
-  kind: Exclude<EmailKind, "TEST">,
+  kind: RequestEmailKind,
   requestId: number,
   triggeredById: number | null,
 ): Promise<NotificationResult> {
@@ -259,7 +259,7 @@ export async function sendRequestNotification(
 
 /** Anteprima (senza invio) di un template per una richiesta: usata dall'editor dei template. */
 export async function previewNotification(
-  kind: Exclude<EmailKind, "TEST">,
+  kind: RequestEmailKind,
   requestId: number,
   lang: Language,
   template?: TemplateContent,

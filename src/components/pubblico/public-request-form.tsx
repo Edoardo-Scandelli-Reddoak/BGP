@@ -11,9 +11,18 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { Field, Input, Select, Textarea } from "@/components/ui/form";
 import type { PublicRequestResult } from "@/lib/requests/public";
+import {
+  looksLikeCompany,
+  SAMPLE_FORMAT_LABELS,
+  SAMPLE_FORMATS,
+  suggestSampleFormat,
+  type SampleFormat,
+} from "@/lib/sample-formats";
 
 type RequesterType = "AGENTE" | "CLIENTE";
-type Item = { product: ProductOption; quantity: number };
+type YesNo = "SI" | "NO";
+/** Riga dell'elenco prodotti: lo stesso prodotto può comparire in più formati. */
+type Item = { key: number; product: ProductOption; quantity: number; sampleFormat: SampleFormat | ""; formatNote: string };
 
 const LANGUAGES: { value: string; label: string }[] = [
   { value: "it", label: "Italiano" },
@@ -21,6 +30,8 @@ const LANGUAGES: { value: string; label: string }[] = [
   { value: "fr", label: "Français" },
   { value: "de", label: "Deutsch" },
 ];
+
+const TEXT_FIELD = "h-12 text-base sm:h-10 sm:text-sm";
 
 /** Contenitore: dopo l'invio permette di compilare una nuova richiesta da zero. */
 export function PublicRequestSection({
@@ -54,6 +65,56 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
+function Required() {
+  return <span className="ml-0.5 text-red-600">*</span>;
+}
+
+/** Scelta a schede (radio) usata per «Chi sei?» e per il preavviso telefonico. */
+function ChoiceCard({
+  name,
+  value,
+  checked,
+  onChange,
+  label,
+  hint,
+  invalid,
+}: {
+  name: string;
+  value: string;
+  checked: boolean;
+  onChange: () => void;
+  label: string;
+  hint?: string;
+  invalid?: boolean;
+}) {
+  return (
+    <label
+      className={cn(
+        "flex cursor-pointer items-start gap-3 rounded-xl p-4 ring-2 ring-inset transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-brand-600",
+        checked
+          ? "bg-brand-50 ring-brand-600"
+          : invalid
+            ? "bg-white ring-red-300 hover:ring-red-400"
+            : "bg-white ring-slate-200 hover:ring-slate-300",
+      )}
+    >
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        checked={checked}
+        onChange={onChange}
+        required
+        className="mt-0.5 size-5 text-brand-700 focus:ring-brand-600"
+      />
+      <span>
+        <span className="block font-semibold text-slate-900">{label}</span>
+        {hint ? <span className="block text-sm text-slate-500">{hint}</span> : null}
+      </span>
+    </label>
+  );
+}
+
 function PublicRequestForm({
   maxProducts,
   maxQuantity,
@@ -70,6 +131,13 @@ function PublicRequestForm({
   const [type, setType] = useState<RequesterType | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [requesterPhone, setRequesterPhone] = useState("");
+  const [recipientName, setRecipientName] = useState("");
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [phoneNotice, setPhoneNotice] = useState<YesNo | null>(null);
+  /** null = non modificato: per il cliente propone il telefono indicato nei suoi dati. */
+  const [noticeNumber, setNoticeNumber] = useState<string | null>(null);
+  const nextKey = useRef(1);
   const errorRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
 
@@ -91,30 +159,45 @@ function PublicRequestForm({
   }
 
   function addProduct(product: ProductOption) {
-    const existing = items.find((i) => i.product.id === product.id);
-    if (existing) {
-      const quantity = Math.min(maxQuantity, existing.quantity + 1);
-      setItems(items.map((i) => (i.product.id === product.id ? { ...i, quantity } : i)));
+    const suggested = suggestSampleFormat(product.code, product.description);
+    const rows = items.filter((i) => i.product.id === product.id);
+    // Già in elenco nel formato proposto (o ancora senza formato): un pezzo in più su quella riga.
+    // Altrimenti una nuova riga, per richiedere lo stesso prodotto in un altro formato.
+    const same = rows.find((i) => i.sampleFormat === (suggested ?? ""));
+    if (same) {
+      const quantity = Math.min(maxQuantity, same.quantity + 1);
+      setItems(items.map((i) => (i.key === same.key ? { ...i, quantity } : i)));
       setNotice(`${product.code} era già nell'elenco: quantità portata a ${quantity}.`);
       return;
     }
     if (items.length >= maxProducts) {
-      setNotice(`Puoi richiedere al massimo ${maxProducts} prodotti diversi in una richiesta.`);
+      setNotice(`Puoi richiedere al massimo ${maxProducts} prodotti in una richiesta.`);
       return;
     }
-    setItems([...items, { product, quantity: 1 }]);
-    setNotice(null);
+    const key = nextKey.current++;
+    setItems([...items, { key, product, quantity: 1, sampleFormat: suggested ?? "", formatNote: "" }]);
+    setNotice(
+      rows.length > 0
+        ? `${product.code} è già nell'elenco: abbiamo aggiunto una riga per richiederlo in un altro formato. Per più pezzi nello stesso formato usa la quantità.`
+        : null,
+    );
   }
 
-  function setQuantity(productId: number, quantity: number) {
-    const q = Math.max(1, Math.min(maxQuantity, Math.round(quantity) || 1));
-    setItems(items.map((i) => (i.product.id === productId ? { ...i, quantity: q } : i)));
+  function updateItem(key: number, patch: Partial<Omit<Item, "key" | "product">>) {
+    setItems(items.map((i) => (i.key === key ? { ...i, ...patch } : i)));
+  }
+
+  function setQuantity(key: number, quantity: number) {
+    updateItem(key, { quantity: Math.max(1, Math.min(maxQuantity, Math.round(quantity) || 1)) });
   }
 
   const isAgent = type === "AGENTE";
   const totalPieces = items.reduce((sum, i) => sum + i.quantity, 0);
   const err = (name: string) => fieldError(name);
   const invalid = (name: string) => (fieldError(name) ? true : undefined);
+  const companyButPrivate = isPrivate && looksLikeCompany(recipientName);
+  // Il cliente riceve i campioni: proponiamo il suo telefono. Per l'agente serve quello del cliente.
+  const noticeNumberValue = noticeNumber ?? (type === "CLIENTE" ? requesterPhone : "");
 
   return (
     <form onSubmit={onSubmit} className="relative space-y-5">
@@ -130,34 +213,24 @@ function PublicRequestForm({
         <fieldset>
           <legend className="sr-only">Chi sei?</legend>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {(
-              [
-                ["AGENTE", "Agente BGP", "Richiedo i campioni per un mio cliente."],
-                ["CLIENTE", "Cliente", "Richiedo i campioni per la mia azienda."],
-              ] as const
-            ).map(([value, label, hint]) => (
-              <label
-                key={value}
-                className={cn(
-                  "flex cursor-pointer items-start gap-3 rounded-xl p-4 ring-2 ring-inset transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-brand-600",
-                  type === value ? "bg-brand-50 ring-brand-600" : "bg-white ring-slate-200 hover:ring-slate-300",
-                )}
-              >
-                <input
-                  type="radio"
-                  name="requesterType"
-                  value={value}
-                  checked={type === value}
-                  onChange={() => setType(value)}
-                  required
-                  className="mt-0.5 size-5 text-brand-700 focus:ring-brand-600"
-                />
-                <span>
-                  <span className="block font-semibold text-slate-900">{label}</span>
-                  <span className="block text-sm text-slate-500">{hint}</span>
-                </span>
-              </label>
-            ))}
+            <ChoiceCard
+              name="requesterType"
+              value="AGENTE"
+              checked={type === "AGENTE"}
+              onChange={() => setType("AGENTE")}
+              label="Agente BGP"
+              hint="Richiedo i campioni per un mio cliente."
+              invalid={!!err("requesterType")}
+            />
+            <ChoiceCard
+              name="requesterType"
+              value="CLIENTE"
+              checked={type === "CLIENTE"}
+              onChange={() => setType("CLIENTE")}
+              label="Cliente"
+              hint="Richiedo i campioni per la mia azienda o per me."
+              invalid={!!err("requesterType")}
+            />
           </div>
           {err("requesterType") ? (
             <p className="mt-2 text-sm text-red-600" role="alert">
@@ -175,7 +248,7 @@ function PublicRequestForm({
             required
             maxLength={120}
             autoComplete="name"
-            className="h-12 text-base sm:h-10 sm:text-sm"
+            className={TEXT_FIELD}
             aria-invalid={invalid("requesterName")}
           />
         </Field>
@@ -195,7 +268,7 @@ function PublicRequestForm({
               maxLength={200}
               autoComplete="email"
               inputMode="email"
-              className="h-12 text-base sm:h-10 sm:text-sm"
+              className={TEXT_FIELD}
               aria-invalid={invalid("requesterEmail")}
             />
           </Field>
@@ -207,7 +280,9 @@ function PublicRequestForm({
               maxLength={40}
               autoComplete="tel"
               inputMode="tel"
-              className="h-12 text-base sm:h-10 sm:text-sm"
+              value={requesterPhone}
+              onChange={(e) => setRequesterPhone(e.target.value)}
+              className={TEXT_FIELD}
               aria-invalid={invalid("requesterPhone")}
             />
           </Field>
@@ -216,11 +291,15 @@ function PublicRequestForm({
 
       {type ? (
         <Section
-          title={isAgent ? "Cliente destinatario" : "Dati per la spedizione"}
-          description={isAgent ? "Il cliente a cui spediremo i campioni." : "Dove spediremo i campioni."}
+          title="Destinatario e indirizzo di consegna"
+          description={
+            isAgent
+              ? "Il cliente a cui spediremo i campioni: questi dati compaiono sulla bolla e sul pacco."
+              : "A chi e dove spediremo i campioni: questi dati compaiono sulla bolla e sul pacco."
+          }
         >
           <Field
-            label={isAgent ? "Ragione sociale del cliente" : "Ragione sociale / azienda"}
+            label="Destinatario: ragione sociale della ditta o cognome e nome"
             htmlFor="recipientName"
             required
             error={err("recipientName")}
@@ -231,10 +310,53 @@ function PublicRequestForm({
               required
               maxLength={200}
               autoComplete={isAgent ? "off" : "organization"}
-              className="h-12 text-base sm:h-10 sm:text-sm"
+              value={recipientName}
+              onChange={(e) => setRecipientName(e.target.value)}
+              placeholder="Es. Rossi Arredamenti S.r.l. oppure Bianchi Mario"
+              className={TEXT_FIELD}
               aria-invalid={invalid("recipientName")}
             />
           </Field>
+          <div className="space-y-2">
+            <label className="flex items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                name="recipientIsPrivate"
+                checked={isPrivate}
+                onChange={(e) => setIsPrivate(e.target.checked)}
+                className="mt-0.5 size-5 shrink-0 rounded border-slate-300 text-brand-700 focus:ring-brand-600"
+              />
+              <span>
+                <span className="font-medium text-slate-800">Il destinatario è un privato</span>
+                <span className="block text-slate-500">Spunta se spediamo a una persona e non a una ditta.</span>
+              </span>
+            </label>
+            {companyButPrivate ? (
+              <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-200" role="status">
+                «{recipientName.trim()}» sembra una ditta: se è così, togli la spunta e indica la persona a cui è
+                destinata.
+              </p>
+            ) : null}
+          </div>
+          {!isPrivate ? (
+            <Field
+              label="Alla c.a. di (persona a cui è destinata)"
+              htmlFor="attentionOf"
+              required
+              error={err("attentionOf")}
+              hint="Nome e cognome della persona della ditta che riceverà i campioni."
+            >
+              <Input
+                id="attentionOf"
+                name="attentionOf"
+                required
+                maxLength={200}
+                autoComplete={isAgent ? "off" : "name"}
+                className={TEXT_FIELD}
+                aria-invalid={invalid("attentionOf")}
+              />
+            </Field>
+          ) : null}
           {isAgent ? (
             <Field
               label="Email del cliente"
@@ -249,17 +371,17 @@ function PublicRequestForm({
                 maxLength={200}
                 autoComplete="off"
                 inputMode="email"
-                className="h-12 text-base sm:h-10 sm:text-sm"
+                className={TEXT_FIELD}
                 aria-invalid={invalid("recipientEmail")}
               />
             </Field>
           ) : null}
           <Field
-            label={isAgent ? "Indirizzo di spedizione completo" : "Indirizzo di spedizione"}
+            label="Indirizzo di consegna"
             htmlFor="address"
             required
             error={err("address")}
-            hint="Via e numero, CAP, città e provincia. Aggiungi eventuali indicazioni per il corriere."
+            hint="Via e numero civico, CAP, città e provincia. Per l'estero indica anche il paese qui sotto."
           >
             <Textarea
               id="address"
@@ -268,19 +390,20 @@ function PublicRequestForm({
               rows={3}
               maxLength={1000}
               autoComplete={isAgent ? "off" : "street-address"}
+              placeholder={"Via Roma 12\n24023 Clusone (BG)"}
               className="text-base sm:text-sm"
               aria-invalid={invalid("address")}
             />
           </Field>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Paese" htmlFor="country" error={err("country")}>
+            <Field label="Paese" htmlFor="country" error={err("country")} hint="Da indicare se la consegna è all'estero.">
               <Input
                 id="country"
                 name="country"
                 maxLength={80}
                 placeholder="Italia"
                 autoComplete={isAgent ? "off" : "country-name"}
-                className="h-12 text-base sm:h-10 sm:text-sm"
+                className={TEXT_FIELD}
                 aria-invalid={invalid("country")}
               />
             </Field>
@@ -291,13 +414,7 @@ function PublicRequestForm({
               error={err("language")}
               hint="Lingua dell'email di conferma della spedizione."
             >
-              <Select
-                id="language"
-                name="language"
-                defaultValue="it"
-                className="h-12 text-base sm:h-10 sm:text-sm"
-                aria-invalid={invalid("language")}
-              >
+              <Select id="language" name="language" defaultValue="it" className={TEXT_FIELD} aria-invalid={invalid("language")}>
                 {LANGUAGES.map((l) => (
                   <option key={l.value} value={l.value}>
                     {l.label}
@@ -315,12 +432,19 @@ function PublicRequestForm({
 
       <Section
         title="Prodotti"
-        description={`Cerca per codice o descrizione. Fino a ${maxProducts} prodotti, massimo ${maxQuantity} pezzi ciascuno.`}
+        description={`Cerca per codice o descrizione e indica per ciascuno formato e quantità. Fino a ${maxProducts} prodotti, massimo ${maxQuantity} pezzi ciascuno.`}
       >
         <input
           type="hidden"
           name="items"
-          value={JSON.stringify(items.map((i) => ({ productId: i.product.id, quantity: i.quantity })))}
+          value={JSON.stringify(
+            items.map((i) => ({
+              productId: i.product.id,
+              quantity: i.quantity,
+              sampleFormat: i.sampleFormat,
+              formatNote: i.sampleFormat === "ALTRO" ? i.formatNote : "",
+            })),
+          )}
         />
         {/* Invio nella ricerca prodotti: sceglie un risultato, non invia il modulo. */}
         <div
@@ -330,13 +454,14 @@ function PublicRequestForm({
           }}
         >
           <label htmlFor="product-search" className="block text-sm font-medium text-slate-700">
-            Aggiungi un prodotto<span className="ml-0.5 text-red-600">*</span>
+            Aggiungi un prodotto (codice)
+            <Required />
           </label>
           <ProductPicker
             id="product-search"
             publicMode
             onSelect={addProduct}
-            invalid={!!err("items")}
+            invalid={!!err("items") && items.length === 0}
             placeholder="Es. rovere spazzolato, oppure il codice articolo"
           />
           {notice ? (
@@ -357,57 +482,128 @@ function PublicRequestForm({
           </p>
         ) : (
           <ul className="divide-y divide-slate-100 rounded-lg ring-1 ring-slate-200">
-            {items.map((item) => (
-              <li key={item.product.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center">
-                <div className="min-w-0 flex-1">
-                  <p className="font-mono text-xs font-semibold text-brand-800">{item.product.code}</p>
-                  <p className="text-sm text-slate-700">{item.product.description}</p>
-                </div>
-                <div className="flex items-center justify-between gap-3 sm:justify-end">
-                  <div className="flex items-center" role="group" aria-label={`Quantità di ${item.product.code}`}>
-                    <button
-                      type="button"
-                      onClick={() => setQuantity(item.product.id, item.quantity - 1)}
-                      disabled={item.quantity <= 1}
-                      className="flex size-11 items-center justify-center rounded-l-lg bg-white text-lg font-semibold text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:text-slate-300 sm:size-9"
-                      aria-label="Diminuisci quantità"
+            {items.map((item, index) => {
+              const formatId = `item-${item.key}-format`;
+              const noteId = `item-${item.key}-note`;
+              const qtyId = `item-${item.key}-qty`;
+              const formatError = err(`items.${index}.sampleFormat`);
+              const noteError = err(`items.${index}.formatNote`);
+              const rowError = err(`items.${index}.quantity`) ?? err(`items.${index}.productId`);
+              return (
+                <li key={item.key} className="space-y-3 px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-mono text-xs font-semibold text-brand-800">{item.product.code}</p>
+                      <p className="text-sm text-slate-700">{item.product.description}</p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="-mr-2 h-11 shrink-0 text-red-700 hover:bg-red-50 sm:h-8"
+                      aria-label={`Rimuovi ${item.product.code}`}
+                      onClick={() => {
+                        setItems(items.filter((i) => i.key !== item.key));
+                        setNotice(null);
+                      }}
                     >
-                      −
-                    </button>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={1}
-                      max={maxQuantity}
-                      value={item.quantity}
-                      onChange={(e) => setQuantity(item.product.id, Number(e.target.value))}
-                      aria-label="Quantità"
-                      className="h-11 w-14 border-0 text-center text-base font-semibold ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-brand-600 sm:h-9 sm:text-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setQuantity(item.product.id, item.quantity + 1)}
-                      disabled={item.quantity >= maxQuantity}
-                      className="flex size-11 items-center justify-center rounded-r-lg bg-white text-lg font-semibold text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:text-slate-300 sm:size-9"
-                      aria-label="Aumenta quantità"
-                    >
-                      +
-                    </button>
+                      Rimuovi
+                    </Button>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-11 text-red-700 hover:bg-red-50 sm:h-8"
-                    onClick={() => {
-                      setItems(items.filter((i) => i.product.id !== item.product.id));
-                      setNotice(null);
-                    }}
-                  >
-                    Rimuovi
-                  </Button>
-                </div>
-              </li>
-            ))}
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                    <div className="space-y-1">
+                      <label htmlFor={formatId} className="block text-xs font-medium text-slate-600">
+                        Formato del campione
+                        <Required />
+                      </label>
+                      <Select
+                        id={formatId}
+                        required
+                        value={item.sampleFormat}
+                        onChange={(e) => updateItem(item.key, { sampleFormat: e.target.value as SampleFormat | "" })}
+                        className={TEXT_FIELD}
+                        aria-invalid={formatError ? true : undefined}
+                        aria-describedby={formatError ? `${formatId}-err` : undefined}
+                      >
+                        <option value="">Scegli il formato…</option>
+                        {SAMPLE_FORMATS.map((f) => (
+                          <option key={f} value={f}>
+                            {SAMPLE_FORMAT_LABELS[f]}
+                          </option>
+                        ))}
+                      </Select>
+                      {formatError ? (
+                        <p id={`${formatId}-err`} className="text-sm text-red-600">
+                          {formatError}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="space-y-1">
+                      <label htmlFor={qtyId} className="block text-xs font-medium text-slate-600">
+                        Quantità
+                        <Required />
+                      </label>
+                      <div className="flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => setQuantity(item.key, item.quantity - 1)}
+                          disabled={item.quantity <= 1}
+                          className="flex size-12 items-center justify-center rounded-l-lg bg-white text-lg font-semibold text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:text-slate-300 sm:size-10"
+                          aria-label={`Diminuisci quantità di ${item.product.code}`}
+                        >
+                          −
+                        </button>
+                        <input
+                          id={qtyId}
+                          type="number"
+                          inputMode="numeric"
+                          required
+                          min={1}
+                          max={maxQuantity}
+                          value={item.quantity}
+                          onChange={(e) => setQuantity(item.key, Number(e.target.value))}
+                          aria-invalid={rowError ? true : undefined}
+                          className="h-12 w-16 border-0 text-center text-base font-semibold ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-brand-600 sm:h-10 sm:text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setQuantity(item.key, item.quantity + 1)}
+                          disabled={item.quantity >= maxQuantity}
+                          className="flex size-12 items-center justify-center rounded-r-lg bg-white text-lg font-semibold text-slate-700 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:text-slate-300 sm:size-10"
+                          aria-label={`Aumenta quantità di ${item.product.code}`}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  {item.sampleFormat === "ALTRO" ? (
+                    <div className="space-y-1">
+                      <label htmlFor={noteId} className="block text-xs font-medium text-slate-600">
+                        Dettaglio formato
+                        <Required />
+                      </label>
+                      <Input
+                        id={noteId}
+                        required
+                        maxLength={200}
+                        value={item.formatNote}
+                        onChange={(e) => updateItem(item.key, { formatNote: e.target.value })}
+                        placeholder="Es. campione tagliato 30 × 20 cm"
+                        className={TEXT_FIELD}
+                        aria-invalid={noteError ? true : undefined}
+                        aria-describedby={noteError ? `${noteId}-err` : undefined}
+                      />
+                      {noteError ? (
+                        <p id={`${noteId}-err`} className="text-sm text-red-600">
+                          {noteError}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {rowError ? <p className="text-sm text-red-600">{rowError}</p> : null}
+                </li>
+              );
+            })}
           </ul>
         )}
         {items.length > 0 ? (
@@ -415,6 +611,67 @@ function PublicRequestForm({
             {items.length} prodott{items.length === 1 ? "o" : "i"} su {maxProducts} ·{" "}
             {totalPieces} {totalPieces === 1 ? "pezzo" : "pezzi"} in totale
           </p>
+        ) : null}
+      </Section>
+
+      <Section title="Preavviso telefonico" description="Il corriere può telefonare prima della consegna per concordarla.">
+        <fieldset>
+          <legend className="text-sm font-medium text-slate-700">
+            Serve il preavviso telefonico prima della consegna?
+            <Required />
+          </legend>
+          <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <ChoiceCard
+              name="phoneNotice"
+              value="SI"
+              checked={phoneNotice === "SI"}
+              onChange={() => setPhoneNotice("SI")}
+              label="Sì"
+              hint="Il corriere telefona prima di consegnare."
+              invalid={!!err("phoneNotice")}
+            />
+            <ChoiceCard
+              name="phoneNotice"
+              value="NO"
+              checked={phoneNotice === "NO"}
+              onChange={() => setPhoneNotice("NO")}
+              label="No"
+              hint="Consegna senza preavviso."
+              invalid={!!err("phoneNotice")}
+            />
+          </div>
+          {err("phoneNotice") ? (
+            <p className="mt-2 text-sm text-red-600" role="alert">
+              {err("phoneNotice")}
+            </p>
+          ) : null}
+        </fieldset>
+        {phoneNotice === "SI" ? (
+          <Field
+            label="Numero di telefono per il preavviso"
+            htmlFor="phoneNoticeNumber"
+            required
+            error={err("phoneNoticeNumber")}
+            hint={
+              isAgent
+                ? "Il numero del cliente o della persona che riceverà i campioni: il corriere chiamerà questo numero."
+                : "Il numero che il corriere chiamerà prima della consegna."
+            }
+          >
+            <Input
+              id="phoneNoticeNumber"
+              name="phoneNoticeNumber"
+              type="tel"
+              required
+              maxLength={40}
+              autoComplete={isAgent ? "off" : "tel"}
+              inputMode="tel"
+              value={noticeNumberValue}
+              onChange={(e) => setNoticeNumber(e.target.value)}
+              className={TEXT_FIELD}
+              aria-invalid={invalid("phoneNoticeNumber")}
+            />
+          </Field>
         ) : null}
       </Section>
 
@@ -448,7 +705,7 @@ function PublicRequestForm({
           <span className="text-slate-700">
             Acconsento al trattamento dei dati inseriti da parte di BGP Group S.r.l. per gestire questa richiesta e la
             spedizione dei campioni, nel rispetto del Regolamento UE 2016/679 (GDPR).
-            <span className="ml-0.5 text-red-600">*</span>
+            <Required />
           </span>
         </label>
         {err("consent") ? (
@@ -483,7 +740,14 @@ function ThankYou({ result, onNewRequest }: { result?: PublicRequestResult; onNe
         {result?.confirmation || "Riceverai un'email quando i campioni saranno spediti."}
       </p>
       <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-600">
-        Il nostro ufficio verificherà la richiesta e preparerà i campioni al più presto.
+        {result?.recipient ? (
+          <>
+            Il nostro ufficio verificherà la richiesta e preparerà al più presto i campioni per{" "}
+            <span className="font-medium text-slate-800">{result.recipient}</span>.
+          </>
+        ) : (
+          "Il nostro ufficio verificherà la richiesta e preparerà i campioni al più presto."
+        )}
         {result?.code ? " Conserva il codice per eventuali comunicazioni." : ""}
       </p>
       <div className="mt-6 flex justify-center">

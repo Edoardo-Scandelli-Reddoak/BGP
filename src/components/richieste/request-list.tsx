@@ -42,6 +42,35 @@ function SourceBadges({ row }: { row: OpenListRow }) {
   );
 }
 
+/** Preavviso telefonico richiesto: il numero compare passando sopra il badge. */
+function PhoneNoticeBadge({ row }: { row: OpenListRow }) {
+  if (!row.phoneNotice) return null;
+  const number = row.phoneNoticeNumber?.trim();
+  return (
+    <span title={number ? `Preavviso telefonico: ${number}` : "Preavviso telefonico prima della consegna"}>
+      <Badge tone="blue">Preavviso tel.</Badge>
+    </span>
+  );
+}
+
+/** Destinatario + indirizzo breve (l'indirizzo non contiene più la riga del destinatario). */
+function Destination({ row }: { row: OpenListRow }) {
+  const recipient = row.recipientName?.trim();
+  const address = shortAddress(row.destinationAddress);
+  if (!recipient && !address) return <span className="text-slate-400">—</span>;
+  return (
+    <span className="flex flex-col items-start gap-0.5">
+      {recipient ? <span className="font-medium text-slate-900">{recipient}</span> : null}
+      {address ? (
+        <span className="text-xs text-slate-500" title={shortAddress(row.destinationAddress, 500)}>
+          {address}
+        </span>
+      ) : null}
+      <PhoneNoticeBadge row={row} />
+    </span>
+  );
+}
+
 /** Stessa regola della logistica: bolla pronta se segnata pronta, con numero DDT o con il DDT caricato. */
 function BollaBadge({ row }: { row: OpenListRow }) {
   if (!row.deliveryFormRequired) return null;
@@ -104,8 +133,8 @@ export function RequestList({ rows }: { rows: OpenListRow[] }) {
                 <TD>
                   <ProductsSummary row={row} />
                 </TD>
-                <TD className="max-w-60 text-sm text-slate-600">
-                  <span title={row.destinationAddress}>{shortAddress(row.destinationAddress) || "—"}</span>
+                <TD className="max-w-60 text-sm">
+                  <Destination row={row} />
                 </TD>
                 <TD>
                   <span className="flex flex-col items-start gap-1">
@@ -146,11 +175,14 @@ export function RequestList({ rows }: { rows: OpenListRow[] }) {
                   {row.firstCodes.length ? ` · ${row.firstCodes.join(", ")}` : ""}
                 </span>
               </div>
-              {row.destinationAddress ? (
-                <p className="mt-1 truncate text-xs text-slate-500">{shortAddress(row.destinationAddress)}</p>
+              {row.recipientName?.trim() || row.destinationAddress ? (
+                <p className="mt-1 truncate text-xs text-slate-500">
+                  {[row.recipientName?.trim(), shortAddress(row.destinationAddress)].filter(Boolean).join(" · ")}
+                </p>
               ) : null}
               <div className="mt-2 flex flex-wrap gap-1 empty:hidden">
                 <BollaBadge row={row} />
+                <PhoneNoticeBadge row={row} />
                 {row.source === "MODULO_PUBBLICO" ? <Badge tone="violet">Modulo pubblico</Badge> : null}
                 {row.contactNeedsReview ? <Badge tone="amber">Contatto da verificare</Badge> : null}
               </div>

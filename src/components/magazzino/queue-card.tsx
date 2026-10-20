@@ -5,6 +5,7 @@ import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { cn } from "@/components/ui/cn";
 import { daysSince, formatDateTime, formatKg, formatM2, requestCode } from "@/lib/format";
 import { destinationCity, waitingLabel } from "./format";
+import { SampleFormatLabel } from "./sample-format-label";
 
 function ageTone(days: number): BadgeTone {
   if (days >= 3) return "red";
@@ -38,6 +39,21 @@ function PinIcon() {
   );
 }
 
+const same = (a: string | null | undefined, b: string | null | undefined) =>
+  Boolean(a && b && a.trim().toLowerCase() === b.trim().toLowerCase());
+
+/** Riga sotto il destinatario: «alla c.a.» e il contatto che ha chiesto i campioni, se è un altro. */
+function recipientDetails(card: WarehouseCard, recipient: string): string {
+  const parts: string[] = [];
+  if (card.attentionOf) parts.push(`c.a. ${card.attentionOf}`);
+  if (!same(recipient, card.contactName) && !same(recipient, card.contactCompany)) {
+    const company =
+      card.contactCompany && !same(card.contactCompany, card.contactName) ? ` (${card.contactCompany})` : "";
+    parts.push(`Contatto: ${card.contactName}${company}`);
+  }
+  return parts.join(" · ");
+}
+
 /** Scheda di una richiesta nella coda magazzino: tutta la scheda apre il dettaglio. */
 export function QueueCard({ card }: { card: WarehouseCard }) {
   const ready = card.status === "PRONTA_RITIRO";
@@ -46,6 +62,8 @@ export function QueueCard({ card }: { card: WarehouseCard }) {
   const hasPackages = card.packagesCount !== null && card.packagesCount > 0;
   const hasWeight = card.weightKg !== null && card.weightKg > 0;
   const code = requestCode(card.id);
+  const recipient = card.recipientName?.trim() || card.contactName;
+  const details = recipientDetails(card, recipient);
 
   return (
     <Link
@@ -55,10 +73,8 @@ export function QueueCard({ card }: { card: WarehouseCard }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-mono text-sm font-semibold text-brand-700 group-hover:underline">{code}</p>
-          <p className="mt-0.5 truncate text-base font-semibold text-slate-900">{card.contactName}</p>
-          {card.contactCompany && card.contactCompany !== card.contactName ? (
-            <p className="truncate text-sm text-slate-500">{card.contactCompany}</p>
-          ) : null}
+          <p className="mt-0.5 truncate text-base font-semibold text-slate-900">{recipient}</p>
+          {details ? <p className="truncate text-sm text-slate-500">{details}</p> : null}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           {ready ? (
@@ -86,7 +102,9 @@ export function QueueCard({ card }: { card: WarehouseCard }) {
         {card.items.map((item) => (
           <li key={item.id} className="flex min-w-0 items-baseline gap-2 text-sm">
             <span className="w-9 shrink-0 text-right text-base font-bold tabular-nums text-slate-900">{item.quantity}×</span>
-            <span className="min-w-0 truncate">
+            {/* «2× MEZZE DOGHE · CODICE — descrizione»: il formato prima di tutto, è ciò che si prepara. */}
+            <span className="line-clamp-2 min-w-0 leading-6">
+              <SampleFormatLabel format={item.sampleFormat} note={item.formatNote} />{" "}
               <span className="font-mono font-semibold text-slate-900">{item.code}</span>
               {item.description ? <span className="text-slate-500"> — {item.description}</span> : null}
             </span>

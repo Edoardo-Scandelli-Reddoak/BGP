@@ -7,8 +7,10 @@ import { formatDateTime, formatKg, formatM2, requestCode } from "@/lib/format";
 import type { RequestDetail } from "@/lib/requests/queries";
 import { EDITABLE_IN, type WorkflowSnapshot } from "@/lib/requests/workflow";
 import { can } from "@/lib/roles";
+import { sampleFormatMissing } from "@/lib/sample-formats";
 import { PiecesSection } from "./pieces-section";
 import { PreparationForm } from "./preparation-form";
+import { SampleFormatLabel } from "./sample-format-label";
 import type { PieceGroup, WarehouseProduct } from "./types";
 
 function SectionTitle({ id, children, aside }: { id: string; children: ReactNode; aside?: ReactNode }) {
@@ -22,9 +24,32 @@ function SectionTitle({ id, children, aside }: { id: string; children: ReactNode
   );
 }
 
+/**
+ * Prodotti selezionabili per i pezzi misurati: i pezzi sono legati al prodotto, non al formato,
+ * quindi un prodotto richiesto in due formati (es. mazzetta e doghe intere) compare una volta sola.
+ */
+function warehouseProducts(request: RequestDetail): WarehouseProduct[] {
+  const byId = new Map<number, WarehouseProduct>();
+  for (const item of request.items) {
+    const p = byId.get(item.productId);
+    if (p) p.requestedQty += item.quantity;
+    else
+      byId.set(item.productId, {
+        productId: item.productId,
+        code: item.product.code,
+        description: item.product.description,
+        requestedQty: item.quantity,
+      });
+  }
+  return [...byId.values()];
+}
+
 /** Pezzi raggruppati per prodotto, nell'ordine dei prodotti richiesti. */
 function groupPieces(request: RequestDetail): PieceGroup[] {
-  const order = new Map(request.items.map((item, i) => [item.productId, i]));
+  const order = new Map<number, number>();
+  request.items.forEach((item, i) => {
+    if (!order.has(item.productId)) order.set(item.productId, i);
+  });
   const groups = new Map<number, PieceGroup>();
   for (const p of request.pieces) {
     let g = groups.get(p.productId);
@@ -91,14 +116,13 @@ export async function WarehousePanel({
   const editable = can(user.role, "warehouse.work") && EDITABLE_IN.warehouse.includes(request.status);
   const inPreparation = request.status === "IN_PREPARAZIONE";
 
-  const products: WarehouseProduct[] = request.items.map((item) => ({
-    productId: item.productId,
-    code: item.product.code,
-    description: item.product.description,
-    requestedQty: item.quantity,
-  }));
+  const products = warehouseProducts(request);
   const groups = groupPieces(request);
   const byProduct = new Map(groups.map((g) => [g.productId, g]));
+  // Prodotto presente su più righe (formati diversi): i pezzi misurati sono il totale del prodotto.
+  const linesPerProduct = new Map<number, number>();
+  for (const item of request.items) linesPerProduct.set(item.productId, (linesPerProduct.get(item.productId) ?? 0) + 1);
+  const missingFormat = request.items.filter((i) => sampleFormatMissing(i.sampleFormat, i.formatNote)).length;
   const { readyInfo, bollaNotice } = readyDetails(request);
 
   const description = editable
@@ -126,6 +150,20 @@ export async function WarehousePanel({
         {/* Prodotti da preparare */}
         <section aria-labelledby="magazzino-items">
           <SectionTitle id="magazzino-items">{inPreparation ? "Da preparare" : "Prodotti richiesti"}</SectionTitle>
+          {inPreparation && missingFormat > 0 ? (
+            <Alert
+              tone="warning"
+              className="mb-3"
+              title={
+                missingFormat === 1
+                  ? "Formato del campione non indicato per un prodotto."
+                  : `Formato del campione non indicato per ${missingFormat} prodotti.`
+              }
+            >
+              Prima di preparare chiedi al back office se servono doghe intere, mezze doghe, mazzetta, pannello o
+              espositore: può indicarlo modificando i prodotti della richiesta.
+            </Alert>
+          ) : null}
           {request.notes ? (
             <div className="mb-3 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-950 ring-1 ring-inset ring-amber-200">
               <span className="font-semibold">Note del back office: </span>
@@ -138,22 +176,26 @@ export async function WarehousePanel({
             <ul className="divide-y divide-slate-100 rounded-lg ring-1 ring-slate-200">
               {request.items.map((item) => {
                 const g = byProduct.get(item.productId);
+                const shared = (linesPerProduct.get(item.productId) ?? 1) > 1;
                 return (
                   <li key={item.id} className="flex gap-4 px-4 py-3">
                     <div className="flex size-14 shrink-0 flex-col items-center justify-center rounded-lg bg-brand-50 text-brand-900 ring-1 ring-inset ring-brand-200">
                       <span className="text-2xl font-bold leading-none tabular-nums">{item.quantity}</span>
-                      <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-600">
-                        {item.quantity === 1 ? "pezzo" : "pezzi"}
-                      </span>
+                      <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-600">qtà</span>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="font-mono text-base font-semibold text-slate-900">{item.product.code}</p>
+                      {/* Cosa preparare: formato (doghe intere, mezze doghe, mazzetta…), poi codice e descrizione. */}
+                      <p className="leading-7">
+                        <SampleFormatLabel size="lg" format={item.sampleFormat} note={item.formatNote} />
+                      </p>
+                      <p className="mt-1 font-mono text-base font-semibold text-slate-900">{item.product.code}</p>
                       <p className="line-clamp-2 text-sm text-slate-600">{item.product.description}</p>
                       {item.notes ? <p className="mt-1 text-sm font-medium text-amber-800">Nota: {item.notes}</p> : null}
                       <p className="mt-1 text-xs text-slate-500">
                         {g ? (
                           <span className="font-medium text-emerald-700">
-                            Misurati: {g.piecesCount} {g.piecesCount === 1 ? "pezzo" : "pezzi"} · {formatM2(g.m2)}
+                            Misurati{shared ? " (totale del prodotto, tutti i formati)" : ""}: {g.piecesCount}{" "}
+                            {g.piecesCount === 1 ? "pezzo" : "pezzi"} · {formatM2(g.m2)}
                           </span>
                         ) : (
                           "Nessun pezzo misurato"

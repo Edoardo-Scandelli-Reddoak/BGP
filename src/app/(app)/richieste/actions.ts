@@ -53,6 +53,8 @@ function parseItems(raw: string): RequestInfoInput["items"] | null {
       return {
         productId: item.productId,
         quantity: item.quantity,
+        sampleFormat: typeof item.sampleFormat === "string" ? item.sampleFormat : null,
+        formatNote: typeof item.formatNote === "string" ? item.formatNote : null,
         notes: typeof item.notes === "string" ? item.notes : null,
       };
     });
@@ -61,12 +63,24 @@ function parseItems(raw: string): RequestInfoInput["items"] | null {
   }
 }
 
+/** Radio «Preavviso telefonico»: "si" / "no"; nessuna scelta = non ancora indicato (null). */
+function phoneNoticeFrom(formData: FormData): boolean | null {
+  const v = text(formData, "phoneNotice");
+  return v === "si" ? true : v === "no" ? false : null;
+}
+
 function readRequestInfo(formData: FormData): RequestInfoInput | null {
   const items = parseItems(text(formData, "items"));
   if (items === null) return null;
+  const phoneNotice = phoneNoticeFrom(formData);
   return {
     contactId: text(formData, "contactId"),
+    recipientName: text(formData, "recipientName"),
+    attentionOf: text(formData, "attentionOf"),
     destinationAddress: text(formData, "destinationAddress"),
+    phoneNotice,
+    // Con «No» il numero non serve (il servizio lo azzera comunque).
+    phoneNoticeNumber: phoneNotice ? text(formData, "phoneNoticeNumber") : null,
     notes: text(formData, "notes"),
     deliveryFormRequired: formData.get("deliveryFormRequired") === "on",
     receivedAt: text(formData, "receivedAt") || null,

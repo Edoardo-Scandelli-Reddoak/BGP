@@ -29,6 +29,13 @@
       "when": 1792491106597,
       "tag": "0003_dati_richiesta_bgp",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792492072535,
+      "tag": "0004_configurazioni_bgp",
+      "breakpoints": true
     }
   ]
 }

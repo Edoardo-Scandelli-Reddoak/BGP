@@ -11,7 +11,9 @@ export type ContactOption = {
   id: number;
   type: "AGENTE" | "CLIENTE";
   name: string;
+  company: string | null;
   email: string | null;
+  phone: string | null;
   defaultAddress: string | null;
   country: string | null;
   language: "it" | "en" | "fr" | "de";

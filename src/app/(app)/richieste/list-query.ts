@@ -21,7 +21,12 @@ export type OpenListRow = {
   status: RequestStatus;
   receivedAt: Date;
   source: "INTERNO" | "MODULO_PUBBLICO";
+  /** Destinatario (ragione sociale o cognome e nome); null nelle richieste non ancora completate. */
+  recipientName: string | null;
   destinationAddress: string;
+  /** Preavviso telefonico prima della consegna: null = non ancora indicato. */
+  phoneNotice: boolean | null;
+  phoneNoticeNumber: string | null;
   deliveryFormRequired: boolean;
   deliveryFormReady: boolean;
   ddtNumber: string | null;
@@ -49,6 +54,7 @@ function baseConditions(f: OpenListFilters): SQL[] {
     const ors: SQL[] = [
       ilike(contacts.name, pattern),
       ilike(contacts.company, pattern),
+      ilike(sampleRequests.recipientName, pattern),
       sql`exists (select 1 from ${requestItems} ri join ${products} p on p.id = ri.product_id
         where ri.request_id = ${sampleRequests.id} and p.code ilike ${pattern})`,
     ];
@@ -84,7 +90,10 @@ export async function getOpenRequests(f: OpenListFilters) {
       status: sampleRequests.status,
       receivedAt: sampleRequests.receivedAt,
       source: sampleRequests.source,
+      recipientName: sampleRequests.recipientName,
       destinationAddress: sampleRequests.destinationAddress,
+      phoneNotice: sampleRequests.phoneNotice,
+      phoneNoticeNumber: sampleRequests.phoneNoticeNumber,
       deliveryFormRequired: sampleRequests.deliveryFormRequired,
       deliveryFormReady: sampleRequests.deliveryFormReady,
       ddtNumber: sampleRequests.ddtNumber,

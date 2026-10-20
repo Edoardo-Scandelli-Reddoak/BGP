@@ -7,6 +7,7 @@ import { LogisticsPanel } from "@/components/logistica/logistics-panel";
 import { WarehousePanel } from "@/components/magazzino/warehouse-panel";
 import { BackofficeActionsCard } from "@/components/richieste/backoffice-actions-card";
 import { EmailsPanel } from "@/components/richieste/emails-panel";
+import { formatFromDb } from "@/components/richieste/utils";
 import { HistoryPanel } from "@/components/richieste/history-panel";
 import { NextStepCard } from "@/components/richieste/next-step-card";
 import { RequestEditingProvider } from "@/components/richieste/request-editing";
@@ -23,6 +24,7 @@ import { getRequestDetail, type RequestDetail } from "@/lib/requests/queries";
 import { getWorkflowSnapshot } from "@/lib/requests/service";
 import { EDITABLE_IN } from "@/lib/requests/workflow";
 import { can, canViewRequestInStatus, ROLE_HOME } from "@/lib/roles";
+import { looksLikeCompany } from "@/lib/sample-formats";
 import { STATUS_LABELS, STATUS_ORDER } from "@/lib/status";
 
 type Flash = { tone: "success" | "warning"; text: string };
@@ -110,16 +112,23 @@ function editConfig(request: RequestDetail, user: SessionUser): RequestEditConfi
         needsReview: c.needsReview,
         active: c.active,
       },
+      recipientName: request.recipientName ?? "",
+      attentionOf: request.attentionOf ?? "",
       destinationAddress: request.destinationAddress,
+      phoneNotice: request.phoneNotice,
+      phoneNoticeNumber: request.phoneNoticeNumber ?? "",
       notes: request.notes ?? "",
       deliveryFormRequired: request.deliveryFormRequired,
       receivedDate: romeIsoDate(request.receivedAt),
       items: request.items.map((i) => ({
+        key: `riga-${i.id}`,
         productId: i.productId,
         code: i.product.code,
         description: i.product.description,
         active: i.product.active,
         quantity: String(i.quantity),
+        sampleFormat: formatFromDb(i.sampleFormat),
+        formatNote: i.formatNote ?? "",
         notes: i.notes ?? "",
       })),
     },
@@ -145,7 +154,7 @@ export default async function RichiestaDettaglioPage({ params, searchParams }: P
   const infoPanel = (
     <RequestInfoCard
       edit={editConfig(request, user)}
-      description={`${request.items.length} prodott${request.items.length === 1 ? "o" : "i"} · destinazione e contatto`}
+      description={`${request.items.length} prodott${request.items.length === 1 ? "o" : "i"} · contatto, destinatario e consegna`}
     >
       <RequestInfoView request={request} canViewRegistry={can(user.role, "registry.view")} />
     </RequestInfoCard>
@@ -207,6 +216,7 @@ export default async function RichiestaDettaglioPage({ params, searchParams }: P
               user={user}
               contactNeedsReview={request.contact.needsReview}
               contactHref={contactHref}
+              attentionMissing={looksLikeCompany(request.recipientName) && !request.attentionOf?.trim()}
             />
             {panels.map(([key, node]) => (node ? <Fragment key={key}>{node}</Fragment> : null))}
           </RequestEditingProvider>

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { emailTemplates, sampleRequests, users, type EmailKind, type Language, type RequestStatus } from "@/db/schema";
+import { emailTemplates, sampleRequests, users, type Language, type RequestStatus } from "@/db/schema";
 import { TemplateEditor, type PreviewRequestOption } from "@/components/impostazioni/template-editor";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -12,14 +12,13 @@ import {
   DEFAULT_TEMPLATES,
   EMAIL_KIND_DESCRIPTIONS,
   EMAIL_KIND_LABELS,
-  TEMPLATE_LANGUAGES,
-} from "@/lib/email/templates";
+  TEMPLATE_LANGUAGES, type RequestEmailKind } from "@/lib/email/templates";
 import { formatDateTime, LANGUAGE_LABELS, requestCode } from "@/lib/format";
 import { STATUS_LABELS } from "@/lib/status";
 
 export const metadata: Metadata = { title: "Template email — Impostazioni" };
 
-type TemplateKind = Exclude<EmailKind, "TEST">;
+type TemplateKind = RequestEmailKind;
 
 const KINDS = Object.keys(TEMPLATE_LANGUAGES) as TemplateKind[];
 

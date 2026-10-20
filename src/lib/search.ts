@@ -59,5 +59,7 @@ export async function searchContacts(q: string, opts: { type?: "AGENTE" | "CLIEN
     agentName: c.agent?.name ?? null,
     agentEmail: c.agent?.email ?? null,
     needsReview: c.needsReview,
+    company: c.company,
+    phone: c.phone,
   }));
 }

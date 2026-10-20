@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   attachments,
+  bollaCounters,
   carriers,
   contacts,
   pieces,
@@ -18,7 +19,9 @@ import type { SessionUser } from "@/lib/auth/session";
 import { sendRequestNotification, type NotificationResult } from "@/lib/email/notifications";
 import { parseEmailList } from "@/lib/email/recipients";
 import { TIME_ZONE, todayIso } from "@/lib/format";
+import { bollaRuleReasons, formatBollaNumber, type BollaConfig } from "@/lib/config/bolla";
 import { can } from "@/lib/roles";
+import { getSetting } from "@/lib/settings";
 import { SAMPLE_FORMATS, sampleFormatMissing } from "@/lib/sample-formats";
 import { nextStatus, previousStatus, STATUS_LABELS } from "@/lib/status";
 import { dbId } from "@/lib/validation";
@@ -101,6 +104,8 @@ export const requestInfoInput = z.object({
     .min(1, "Indica l'indirizzo di consegna")
     .max(2000)
     .transform(normalizeMultiline),
+  /** Paese di consegna (se assente si usa quello del contatto). */
+  destinationCountry: optionalText(60),
   /** Preavviso telefonico prima della consegna: null = non ancora indicato. */
   phoneNotice: z.boolean().nullish().transform((v) => v ?? null),
   phoneNoticeNumber: optionalText(50),
@@ -115,6 +120,8 @@ export const requestInfoInput = z.object({
 }).superRefine((v, ctx) => {
   if (v.phoneNotice === true && !v.phoneNoticeNumber) {
     ctx.addIssue({ code: "custom", path: ["phoneNoticeNumber"], message: "Indica il numero per il preavviso" });
+  } else if (v.phoneNotice === true && (v.phoneNoticeNumber?.replace(/\D/g, "").length ?? 0) < 6) {
+    ctx.addIssue({ code: "custom", path: ["phoneNoticeNumber"], message: "Numero di telefono non valido" });
   }
 });
 export type RequestInfoInput = z.input<typeof requestInfoInput>;
@@ -143,6 +150,8 @@ export const logisticsInput = z.object({
   ddtNumber: optionalText(50),
   deliveryFormReady: z.boolean().optional(),
   shippingCost: z.coerce.number().min(0, "Costo non valido").max(100000).nullish(),
+  /** Importi delle voci di costo manuali (Impostazioni → Costi); assente = non modificare. */
+  extraCosts: z.record(z.string().regex(/^m_[a-z0-9_]{1,40}$/), z.coerce.number().min(0, "Importo non valido").max(100000)).optional(),
   logisticsNotes: optionalText(2000),
 });
 export type LogisticsInput = z.input<typeof logisticsInput>;
@@ -190,6 +199,8 @@ async function loadSnapshot(id: number) {
     pickupDate: req.pickupDate,
     ddtNumber: req.ddtNumber,
     hasDdtAttachment: ddt.n > 0,
+    bollaNumber: req.bollaNumber,
+    bollaMode: (await getSetting("bollaConfig")).mode,
     trackingNumber: req.trackingNumber,
     shipmentDate: req.shipmentDate,
     notificationSentAt: req.notificationSentAt,
@@ -200,6 +211,27 @@ async function loadSnapshot(id: number) {
 /** Snapshot del flusso per i pannelli UI (cosa manca per avanzare). */
 export async function getWorkflowSnapshot(id: number): Promise<WorkflowSnapshot | null> {
   return (await loadSnapshot(id))?.snapshot ?? null;
+}
+
+/**
+ * Regole automatiche della bolla (Impostazioni → Bolla di consegna): se una regola si applica la
+ * bolla diventa obbligatoria e se ne registra il motivo; altrimenti vale la scelta manuale.
+ */
+export function applyBollaRules(
+  manual: boolean,
+  input: { destinationCountry: string | null; itemFormats: (string | null)[]; packagesCount: number | null },
+  config: BollaConfig,
+): { deliveryFormRequired: boolean; deliveryFormAutoReason: string | null } {
+  const reasons = bollaRuleReasons(input, config.rules);
+  return reasons.length
+    ? { deliveryFormRequired: true, deliveryFormAutoReason: reasons.join(", ") }
+    : { deliveryFormRequired: manual, deliveryFormAutoReason: null };
+}
+
+/** Paese del contatto (predefinito per il paese di consegna). */
+async function contactCountry(contactId: number): Promise<string | null> {
+  const [c] = await db.select({ country: contacts.country }).from(contacts).where(eq(contacts.id, contactId)).limit(1);
+  return c?.country ?? null;
 }
 
 function statusError(status: RequestStatus, action: string): Result<never> {
@@ -280,18 +312,26 @@ export async function createRequest(
   const productErr = await validateProducts(items.map((i) => i.productId));
   if (productErr) return fail(productErr, { items: productErr });
 
+  const destinationCountry = input.destinationCountry ?? (await contactCountry(input.contactId));
+  const bolla = applyBollaRules(
+    input.deliveryFormRequired,
+    { destinationCountry, itemFormats: items.map((i) => i.sampleFormat ?? null), packagesCount: null },
+    await getSetting("bollaConfig"),
+  );
+
   const id = await db.transaction(async (tx) => {
     const [row] = await tx
       .insert(sampleRequests)
       .values({
         contactId: input.contactId,
+        destinationCountry,
         recipientName: input.recipientName,
         attentionOf: input.attentionOf,
         destinationAddress: input.destinationAddress,
         phoneNotice: input.phoneNotice,
         phoneNoticeNumber: input.phoneNotice === false ? null : input.phoneNoticeNumber,
         notes: input.notes,
-        deliveryFormRequired: input.deliveryFormRequired,
+        ...bolla,
         receivedAt: receivedAtFrom(input.receivedAt),
         source: "INTERNO",
         createdById: actor.id,
@@ -330,7 +370,7 @@ export async function updateRequestInfo(actor: Actor, id: number, rawInput: Requ
 
   const items = mergeItems(input.items);
   const itemKey = (i: { productId: number; sampleFormat?: string | null; formatNote?: string | null }) =>
-    [i.productId, i.sampleFormat ?? "", i.formatNote?.trim() || ""].join("|");
+    [i.productId, i.sampleFormat ?? "", i.formatNote?.trim().toLowerCase() || ""].join("|");
   const before = new Map(current.items.map((i) => [itemKey(i), i]));
   const itemsChanged =
     items.length !== current.items.length ||
@@ -355,18 +395,31 @@ export async function updateRequestInfo(actor: Actor, id: number, rawInput: Requ
     }
   }
 
+  const destinationCountry =
+    input.destinationCountry ?? (input.contactId !== current.contactId ? await contactCountry(input.contactId) : current.destinationCountry);
+  const bolla = applyBollaRules(
+    input.deliveryFormRequired,
+    {
+      destinationCountry,
+      itemFormats: (itemsChanged ? items : current.items).map((i) => i.sampleFormat ?? null),
+      packagesCount: current.packagesCount,
+    },
+    await getSetting("bollaConfig"),
+  );
+
   const saved = await db.transaction(async (tx) => {
     const rows = await tx
       .update(sampleRequests)
       .set({
         contactId: input.contactId,
+        destinationCountry,
         recipientName: input.recipientName,
         attentionOf: input.attentionOf,
         destinationAddress: input.destinationAddress,
         phoneNotice: input.phoneNotice,
         phoneNoticeNumber: input.phoneNotice === false ? null : input.phoneNoticeNumber,
         notes: input.notes,
-        deliveryFormRequired: input.deliveryFormRequired,
+        ...bolla,
         ...(input.receivedAt ? { receivedAt: receivedAtFrom(input.receivedAt) } : {}),
       })
       .where(and(eq(sampleRequests.id, id), eq(sampleRequests.status, current.status)))
@@ -382,7 +435,7 @@ export async function updateRequestInfo(actor: Actor, id: number, rawInput: Requ
 
   // Automazione 3 ("bolla richiesta" E "Pronta per il ritiro"): scatta anche quando la bolla viene
   // richiesta su una richiesta già pronta, se la logistica non l'ha ancora preparata.
-  if (current.status === "PRONTA_RITIRO" && !current.deliveryFormRequired && input.deliveryFormRequired) {
+  if (current.status === "PRONTA_RITIRO" && !current.deliveryFormRequired && bolla.deliveryFormRequired) {
     const bollaReady = bollaSatisfied({
       deliveryFormRequired: true,
       deliveryFormReady: current.deliveryFormReady,
@@ -522,6 +575,14 @@ export async function updateLogisticsData(actor: Actor, id: number, rawInput: Lo
       shipmentDate: "Precede la data di ritiro",
     });
   }
+  let extraCosts: Record<string, number> | undefined;
+  if (input.extraCosts) {
+    const allowed = new Set((await getSetting("costConfig")).manual.filter((m) => m.enabled).map((m) => m.key));
+    const unknown = Object.keys(input.extraCosts).filter((k) => !allowed.has(k));
+    if (unknown.length) return fail("Voce di costo non prevista nelle impostazioni: ricarica la pagina.");
+    // Le voci disattivate restano salvate (riattivandole tornano nei report).
+    extraCosts = { ...(current.extraCosts ?? {}), ...input.extraCosts };
+  }
   if (current.status === "SPEDITA") {
     const fieldErrors: Record<string, string> = {};
     if (!input.carrierId) fieldErrors.carrierId = "Obbligatorio per una richiesta spedita";
@@ -545,6 +606,7 @@ export async function updateLogisticsData(actor: Actor, id: number, rawInput: Lo
         shippingCost: input.shippingCost ?? null,
         logisticsNotes: input.logisticsNotes,
         shipmentDate,
+        ...(extraCosts ? { extraCosts } : {}),
       })
       .where(eq(sampleRequests.id, id));
     return { ok: true, message: "Dati amministrativi aggiornati." };
@@ -561,6 +623,7 @@ export async function updateLogisticsData(actor: Actor, id: number, rawInput: Lo
       ...(input.deliveryFormReady !== undefined ? { deliveryFormReady: input.deliveryFormReady } : {}),
       shippingCost: input.shippingCost ?? null,
       logisticsNotes: input.logisticsNotes,
+      ...(extraCosts ? { extraCosts } : {}),
     })
     .where(eq(sampleRequests.id, id));
 
@@ -629,6 +692,50 @@ export async function deleteDdt(actor: Actor, id: number): Promise<Result> {
   return { ok: true, message: "DDT rimosso." };
 }
 
+/**
+ * Genera la bolla di consegna del sistema: assegna il prossimo numero della serie annuale
+ * (Impostazioni → Bolla di consegna) e la segna come pronta. Idempotente: se la bolla ha già un
+ * numero lo restituisce senza consumarne un altro.
+ */
+export async function generateBolla(actor: Actor, id: number): Promise<Result<{ number: string }>> {
+  if (!can(actor.role, "logistics.work")) return fail(DENIED);
+  const config = await getSetting("bollaConfig");
+  if (config.mode === "GESTIONALE") {
+    return fail("La bolla generata è disattivata: in Impostazioni la bolla è il DDT del gestionale.");
+  }
+  const [current] = await db
+    .select({ status: sampleRequests.status, bollaNumber: sampleRequests.bollaNumber })
+    .from(sampleRequests)
+    .where(eq(sampleRequests.id, id))
+    .limit(1);
+  if (!current) return fail(NOT_FOUND);
+  if (!EDITABLE_IN.logistics.includes(current.status)) return statusError(current.status, "generare la bolla");
+  if (current.bollaNumber) return { ok: true, data: { number: current.bollaNumber }, message: `Bolla N° ${current.bollaNumber}.` };
+
+  const year = Number(todayIso().slice(0, 4));
+  const number = await db.transaction(async (tx) => {
+    const [counter] = await tx
+      .insert(bollaCounters)
+      .values({ year, lastNumber: 1 })
+      .onConflictDoUpdate({ target: bollaCounters.year, set: { lastNumber: sql`${bollaCounters.lastNumber} + 1` } })
+      .returning({ n: bollaCounters.lastNumber });
+    const formatted = formatBollaNumber(counter.n, year, config);
+    const rows = await tx
+      .update(sampleRequests)
+      .set({ bollaNumber: formatted, bollaGeneratedAt: new Date(), deliveryFormReady: true })
+      .where(and(eq(sampleRequests.id, id), isNull(sampleRequests.bollaNumber)))
+      .returning({ id: sampleRequests.id });
+    // Generata in contemporanea da un altro utente: si annulla e si usa quella.
+    if (rows.length === 0) tx.rollback();
+    return formatted;
+  }).catch(async () => {
+    const [again] = await db.select({ n: sampleRequests.bollaNumber }).from(sampleRequests).where(eq(sampleRequests.id, id));
+    return again?.n ?? null;
+  });
+  if (!number) return fail("Bolla non generata: riprova.");
+  return { ok: true, data: { number }, message: `Bolla N° ${number} generata.` };
+}
+
 /* ------------------------------------------------------------------ */
 /* Flusso di stato                                                     */
 /* ------------------------------------------------------------------ */
@@ -660,10 +767,32 @@ export async function advanceStatus(
   const problems = transitionProblems(snapshot, to, options);
   if (problems.length) return fail(problems.join(" "));
 
+  // Le regole della bolla si rivalutano quando il magazzino conosce i colli.
+  let bollaUpdate: { deliveryFormRequired: boolean; deliveryFormAutoReason: string | null } | null = null;
+  if (to === "PRONTA_RITIRO" && !snapshot.deliveryFormRequired) {
+    const formats = await db
+      .select({ f: requestItems.sampleFormat })
+      .from(requestItems)
+      .where(eq(requestItems.requestId, id));
+    const applied = applyBollaRules(
+      false,
+      {
+        destinationCountry: loaded.request.destinationCountry,
+        itemFormats: formats.map((r) => r.f),
+        packagesCount: snapshot.packagesCount,
+      },
+      await getSetting("bollaConfig"),
+    );
+    if (applied.deliveryFormRequired) {
+      bollaUpdate = applied;
+      snapshot.deliveryFormRequired = true;
+    }
+  }
+
   const updated = await db.transaction(async (tx) => {
     const rows = await tx
       .update(sampleRequests)
-      .set({ status: to })
+      .set({ status: to, ...(bollaUpdate ?? {}) })
       .where(and(eq(sampleRequests.id, id), eq(sampleRequests.status, from)))
       .returning({ id: sampleRequests.id });
     if (rows.length === 0) return false;
@@ -885,6 +1014,10 @@ export async function countByStatus(): Promise<Record<RequestStatus, number> & {
     .select({ status: sampleRequests.status, n: count() })
     .from(sampleRequests)
     .groupBy(sampleRequests.status);
+  const mode = (await getSetting("bollaConfig")).mode;
+  const generated = sql`(coalesce(trim(${sampleRequests.bollaNumber}), '') <> '' or ${sampleRequests.deliveryFormReady})`;
+  const fromErp = sql`(coalesce(trim(${sampleRequests.ddtNumber}), '') <> '' or exists (select 1 from ${attachments} where ${attachments.requestId} = ${sampleRequests.id} and ${attachments.kind} = 'DDT'))`;
+  const done = mode === "GENERATA" ? generated : mode === "GESTIONALE" ? fromErp : sql`(${generated} or ${fromErp})`;
   const [bolle] = await db
     .select({ n: count() })
     .from(sampleRequests)
@@ -892,9 +1025,7 @@ export async function countByStatus(): Promise<Record<RequestStatus, number> & {
       and(
         eq(sampleRequests.status, "PRONTA_RITIRO"),
         eq(sampleRequests.deliveryFormRequired, true),
-        eq(sampleRequests.deliveryFormReady, false),
-        sql`coalesce(trim(${sampleRequests.ddtNumber}), '') = ''`,
-        sql`not exists (select 1 from ${attachments} where ${attachments.requestId} = ${sampleRequests.id} and ${attachments.kind} = 'DDT')`,
+        sql`not ${done}`,
       ),
     );
   const out = { NUOVA: 0, IN_PREPARAZIONE: 0, PRONTA_RITIRO: 0, SPEDITA: 0, COMPLETATA: 0, bolle: bolle.n };

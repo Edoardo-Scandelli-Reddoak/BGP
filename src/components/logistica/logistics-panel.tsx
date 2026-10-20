@@ -20,6 +20,7 @@ import {
 import { can } from "@/lib/roles";
 import { ConfirmationActions } from "./confirmation-actions";
 import { DdtSection, type DdtFileInfo } from "./ddt-section";
+import { attentionMissing, PhoneNoticeBadge, PhoneNoticeValue, recipientOf } from "./delivery-info";
 import { LogisticsForm, type CarrierOption } from "./logistics-form";
 import { formatBytes } from "./utils";
 
@@ -176,6 +177,34 @@ export async function LogisticsPanel({
     );
   }
 
+  /* --- Consegna: i dati che BGP chiede per ogni spedizione (Italia ed estero) --- */
+  const delivery = (
+    <CardBody className="border-t border-slate-100">
+      <SectionTitle aside={<PhoneNoticeBadge phoneNotice={request.phoneNotice} number={request.phoneNoticeNumber} />}>
+        Consegna
+      </SectionTitle>
+      <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <DetailItem label="Destinatario">
+          <span className="font-medium">{recipientOf(request, request.contact.name)}</span>
+        </DetailItem>
+        <DetailItem label="Alla c.a.">
+          {request.attentionOf?.trim() ||
+            (attentionMissing(request) ? (
+              <span className="text-amber-700">Non indicato (il destinatario sembra una ditta)</span>
+            ) : null)}
+        </DetailItem>
+        <DetailItem label="Indirizzo di consegna">
+          {request.destinationAddress.trim() ? (
+            <span className="whitespace-pre-line">{request.destinationAddress.trim()}</span>
+          ) : null}
+        </DetailItem>
+        <DetailItem label="Preavviso telefonico">
+          <PhoneNoticeValue phoneNotice={request.phoneNotice} number={request.phoneNoticeNumber} />
+        </DetailItem>
+      </dl>
+    </CardBody>
+  );
+
   /* --- Destinatari e ultimo invio della conferma --- */
   const attachmentLabel = request.ddtAttachment
     ? `DDT caricato (${request.ddtAttachment.fileName})`
@@ -230,8 +259,9 @@ export async function LogisticsPanel({
     return (
       <Card>
         {header}
-        <CardBody className="space-y-4">
-          {notices}
+        <CardBody className="space-y-4">{notices}</CardBody>
+        {delivery}
+        <CardBody className="border-t border-slate-100">
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <DetailItem label="Corriere">{request.carrier?.name}</DetailItem>
             <DetailItem label="Data di ritiro">{formatDate(request.pickupDate)}</DetailItem>
@@ -277,6 +307,7 @@ export async function LogisticsPanel({
     <Card>
       {header}
       <CardBody className="space-y-3">{notices}</CardBody>
+      {delivery}
 
       {completed ? (
         <CardBody className="border-t border-slate-100">

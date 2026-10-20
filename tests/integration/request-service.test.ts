@@ -65,18 +65,36 @@ function createdId(res: ActionResult<{ id: number }>): number {
 
 const actor = (role: SessionUser["role"]) => fx.actors[role];
 
-function info(
-  contactId: number,
-  items: { productId: number; quantity: number; notes?: string | null }[],
-  extra: Partial<RequestInfoInput> = {},
-): RequestInfoInput {
+type ItemFixture = {
+  productId: number;
+  quantity: number;
+  notes?: string | null;
+  sampleFormat?: string | null;
+  formatNote?: string | null;
+};
+
+/** Formato predefinito delle righe di prova (se la riga non lo indica, nemmeno come null). */
+const DEFAULT_FORMAT = "MEZZE_DOGHE";
+const RECIPIENT = "ORBIS FURNITURE SRL";
+const ATTENTION_OF = "Sig. Rossi";
+const PHONE = "328 3556565";
+
+/**
+ * Dati completi per «Invia al magazzino» (quelli che BGP chiede per prendere in carico una richiesta):
+ * destinatario, alla c.a., indirizzo senza la riga del destinatario, formato di ogni riga, preavviso.
+ */
+function info(contactId: number, items: ItemFixture[], extra: Partial<RequestInfoInput> = {}): RequestInfoInput {
   return {
     contactId,
+    recipientName: RECIPIENT,
+    attentionOf: ATTENTION_OF,
     destinationAddress: "Via S. Vincenzo de Paoli 8\n24023 Clusone (BG)",
+    phoneNotice: true,
+    phoneNoticeNumber: PHONE,
     notes: null,
     deliveryFormRequired: false,
     receivedAt: null,
-    items,
+    items: items.map((i) => ("sampleFormat" in i ? i : { ...i, sampleFormat: DEFAULT_FORMAT })),
     ...extra,
   };
 }
@@ -104,7 +122,11 @@ function getEmails(id: number, kind: EmailKind) {
 }
 
 function getItems(id: number) {
-  return db.select().from(requestItems).where(eq(requestItems.requestId, id)).orderBy(asc(requestItems.productId));
+  return db
+    .select()
+    .from(requestItems)
+    .where(eq(requestItems.requestId, id))
+    .orderBy(asc(requestItems.productId), asc(requestItems.id));
 }
 
 const isDefaultTemplate = (kind: EmailKind, lang: Language) => !customTemplates.has(`${kind}:${lang}`);
@@ -164,6 +186,22 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
       expectFail(res);
       expect(res.fieldErrors?.destinationAddress).toBeTruthy();
 
+      res = await svc.createRequest(bo, info(c, [{ productId: a, quantity: 1 }], { recipientName: "  " }));
+      expectFail(res);
+      expect(res.fieldErrors?.recipientName).toBe("Indica il destinatario");
+
+      res = await svc.createRequest(bo, info(c, [{ productId: a, quantity: 1 }], { phoneNotice: true, phoneNoticeNumber: " " }));
+      expectFail(res);
+      expect(res.fieldErrors?.phoneNoticeNumber).toBe("Indica il numero per il preavviso");
+
+      res = await svc.createRequest(bo, info(c, [{ productId: a, quantity: 1, sampleFormat: "DOGHE" }]));
+      expectFail(res);
+      expect(res.fieldErrors?.["items.0.sampleFormat"]).toBeTruthy();
+
+      res = await svc.createRequest(bo, info(c, [{ productId: a, quantity: 1, sampleFormat: "ALTRO", formatNote: "  " }]));
+      expectFail(res);
+      expect(res.fieldErrors?.["items.0.formatNote"]).toBe("Descrivi il formato richiesto");
+
       res = await svc.createRequest(bo, info(c, [{ productId: a, quantity: 0 }]));
       expectFail(res);
       expect(res.fieldErrors?.["items.0.quantity"]).toBeTruthy();
@@ -184,6 +222,197 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
 
       const rows = await db.select().from(sampleRequests).where(eq(sampleRequests.contactId, c));
       expect(rows).toHaveLength(0);
+    });
+  });
+
+  describe("dati richiesti da BGP per prendere in carico una richiesta", () => {
+    it("salva destinatario, alla c.a., indirizzo (a capo normalizzati) e preavviso; con «no» il numero non resta", async () => {
+      const bo = actor("BACKOFFICE");
+      const c = fx.contacts.clienteIt.id;
+      const id = createdId(
+        await svc.createRequest(
+          bo,
+          info(c, [{ productId: fx.products.a.id, quantity: 1 }], {
+            recipientName: "  LEGNOARTE SRL ",
+            attentionOf: "  Sig.ra Bianchi ",
+            destinationAddress: " Via Roma 1\r\n24023 Clusone (BG)\r\n ",
+            phoneNotice: false,
+            phoneNoticeNumber: "035 123456",
+          }),
+        ),
+      );
+      expect(await getRequest(id)).toMatchObject({
+        recipientName: "LEGNOARTE SRL",
+        attentionOf: "Sig.ra Bianchi",
+        destinationAddress: "Via Roma 1\n24023 Clusone (BG)",
+        phoneNotice: false,
+        phoneNoticeNumber: null,
+      });
+      expect(await svc.getWorkflowSnapshot(id)).toMatchObject({
+        recipientName: "LEGNOARTE SRL",
+        phoneNotice: false,
+        phoneNoticeNumber: null,
+        itemsCount: 1,
+        itemsMissingFormat: 0,
+      });
+
+      // Privato: niente «alla c.a.»; il preavviso diventa «sì» con il numero.
+      expectOk(
+        await svc.updateRequestInfo(
+          bo,
+          id,
+          info(c, [{ productId: fx.products.a.id, quantity: 1 }], {
+            recipientName: "NERI ANDREA",
+            attentionOf: "",
+            phoneNotice: true,
+            phoneNoticeNumber: " 328 3556565 ",
+          }),
+        ),
+      );
+      expect(await getRequest(id)).toMatchObject({
+        recipientName: "NERI ANDREA",
+        attentionOf: null,
+        phoneNotice: true,
+        phoneNoticeNumber: "328 3556565",
+      });
+      expectOk(await svc.deleteRequest(bo, id));
+    });
+
+    it("bozza senza formato né preavviso: si salva, ma «Invia al magazzino» viene rifiutato", async () => {
+      const bo = actor("BACKOFFICE");
+      const c = fx.contacts.clienteIt.id;
+      const { a, b } = fx.products;
+      const created = await svc.createRequest(
+        bo,
+        info(
+          c,
+          [
+            { productId: a.id, quantity: 1, sampleFormat: null },
+            { productId: b.id, quantity: 1, sampleFormat: "" },
+          ],
+          { phoneNotice: null, phoneNoticeNumber: null },
+        ),
+        { sendToWarehouse: true },
+      );
+      const id = createdId(created);
+      expectOk(created);
+      expect(created.message).toMatch(/Richiesta salvata, ma non inviata al magazzino/);
+      expect(created.message).toContain("Indica il formato del campione per 2 prodotti.");
+      expect(created.message).toContain("Indica se serve il preavviso telefonico prima della consegna.");
+      expect(await getRequest(id)).toMatchObject({ status: "NUOVA", phoneNotice: null });
+      expect((await getItems(id)).map((i) => i.sampleFormat)).toEqual([null, null]);
+      expect(await svc.getWorkflowSnapshot(id)).toMatchObject({ itemsCount: 2, itemsMissingFormat: 2, phoneNotice: null });
+      expect(await getEmails(id, "AVVISO_MAGAZZINO")).toHaveLength(0);
+      expect(await getEvents(id)).toHaveLength(1);
+
+      // Formato su una sola riga e preavviso «no»: manca ancora il formato dell'altra.
+      expectOk(
+        await svc.updateRequestInfo(
+          bo,
+          id,
+          info(
+            c,
+            [
+              { productId: a.id, quantity: 1, sampleFormat: "MAZZETTA" },
+              { productId: b.id, quantity: 1, sampleFormat: null },
+            ],
+            { phoneNotice: false },
+          ),
+        ),
+      );
+      let res = await svc.advanceStatus(bo, id, "IN_PREPARAZIONE");
+      expectFail(res, /formato del campione .*per il prodotto che ne è privo/);
+      expect(res.error).not.toContain("preavviso");
+
+      // Preavviso «sì» senza numero: rifiutato già al salvataggio.
+      const both = [
+        { productId: a.id, quantity: 1, sampleFormat: "MAZZETTA" },
+        { productId: b.id, quantity: 1, sampleFormat: "PANNELLO" },
+      ];
+      res = await svc.updateRequestInfo(bo, id, info(c, both, { phoneNotice: true, phoneNoticeNumber: null }));
+      expectFail(res);
+      expect(res.fieldErrors?.phoneNoticeNumber).toBeTruthy();
+
+      expectOk(await svc.updateRequestInfo(bo, id, info(c, both, { phoneNotice: false })));
+      expectOk(await svc.advanceStatus(bo, id, "IN_PREPARAZIONE"));
+      expect((await getRequest(id)).status).toBe("IN_PREPARAZIONE");
+      const [mail] = await getEmails(id, "AVVISO_MAGAZZINO");
+      if (isDefaultTemplate("AVVISO_MAGAZZINO", "it")) {
+        expect(mail.body).toContain("Preavviso telefonico: No");
+        expect(mail.body).toContain(`- 1 × Mazzetta — ${a.description} (${a.code})`);
+        expect(mail.body).toContain(`- 1 × Pannello — ${b.description} (${b.code})`);
+      }
+    });
+
+    it("dati mancanti nel database (richieste precedenti): destinatario, «Altro» senza descrizione e numero bloccano l'invio", async () => {
+      const bo = actor("BACKOFFICE");
+      const id = createdId(await svc.createRequest(bo, info(fx.contacts.clienteIt.id, [{ productId: fx.products.a.id, quantity: 1 }])));
+      // Come una richiesta migrata o modificata fuori dall'app: lo schema di input non lo permetterebbe.
+      await db.update(sampleRequests).set({ recipientName: null, phoneNotice: true, phoneNoticeNumber: null }).where(eq(sampleRequests.id, id));
+      await db.update(requestItems).set({ sampleFormat: "ALTRO", formatNote: null }).where(eq(requestItems.requestId, id));
+      expect(await svc.getWorkflowSnapshot(id)).toMatchObject({ recipientName: null, itemsMissingFormat: 1 });
+
+      const res = await svc.advanceStatus(bo, id, "IN_PREPARAZIONE");
+      expectFail(res);
+      expect(res.error).toContain("Indica il destinatario (ragione sociale o cognome e nome).");
+      expect(res.error).toContain("formato del campione");
+      expect(res.error).toContain("Indica il numero di telefono per il preavviso.");
+      expect((await getRequest(id)).status).toBe("NUOVA");
+      expect(await getEmails(id, "AVVISO_MAGAZZINO")).toHaveLength(0);
+      expectOk(await svc.deleteRequest(bo, id));
+    });
+
+    it("lo stesso prodotto in due formati resta su due righe; nello stesso formato le quantità si sommano", async () => {
+      const bo = actor("BACKOFFICE");
+      const c = fx.contacts.clienteIt.id;
+      const { a, b } = fx.products;
+      const items: ItemFixture[] = [
+        { productId: a.id, quantity: 1, sampleFormat: "MAZZETTA" },
+        { productId: a.id, quantity: 2, sampleFormat: "DOGHE_INTERE" },
+        { productId: a.id, quantity: 1, sampleFormat: "MAZZETTA", notes: "colori chiari" },
+        { productId: a.id, quantity: 1, sampleFormat: "ALTRO", formatNote: "listello 30 cm" },
+        { productId: a.id, quantity: 1, sampleFormat: "ALTRO", formatNote: " Listello 30 cm " },
+        { productId: b.id, quantity: 1, sampleFormat: "ALTRO", formatNote: "listello 30 cm" },
+      ];
+      const id = createdId(await svc.createRequest(bo, info(c, items), { sendToWarehouse: true }));
+      expect((await getItems(id)).map((i) => [i.productId, i.sampleFormat, i.formatNote, i.quantity, i.notes])).toEqual([
+        [a.id, "MAZZETTA", null, 2, "colori chiari"],
+        [a.id, "DOGHE_INTERE", null, 2, null],
+        [a.id, "ALTRO", "listello 30 cm", 2, null],
+        [b.id, "ALTRO", "listello 30 cm", 1, null],
+      ]);
+      expect((await getRequest(id)).status).toBe("IN_PREPARAZIONE");
+
+      const [mail] = await getEmails(id, "AVVISO_MAGAZZINO");
+      if (isDefaultTemplate("AVVISO_MAGAZZINO", "it")) {
+        expect(mail.body).toContain(`- 2 × Mazzetta — ${a.description} (${a.code})`);
+        expect(mail.body).toContain(`- 2 × Doghe intere — ${a.description} (${a.code})`);
+        expect(mail.body).toContain(`- 2 × Altro: listello 30 cm — ${a.description} (${a.code})`);
+        expect(mail.body).toContain(`- 1 × Altro: listello 30 cm — ${b.description} (${b.code})`);
+      }
+
+      // Durante la preparazione si può ancora cambiare il formato di una riga.
+      const changed: ItemFixture[] = [
+        { productId: a.id, quantity: 2, sampleFormat: "MAZZETTA", notes: "colori chiari" },
+        { productId: a.id, quantity: 2, sampleFormat: "MEZZE_DOGHE" },
+        { productId: a.id, quantity: 2, sampleFormat: "ALTRO", formatNote: "listello 30 cm" },
+        { productId: b.id, quantity: 1, sampleFormat: "ALTRO", formatNote: "listello 30 cm" },
+      ];
+      expectOk(await svc.updateRequestInfo(bo, id, info(c, changed)));
+      expect((await getItems(id)).map((i) => [i.productId, i.sampleFormat, i.quantity])).toEqual([
+        [a.id, "MAZZETTA", 2],
+        [a.id, "MEZZE_DOGHE", 2],
+        [a.id, "ALTRO", 2],
+        [b.id, "ALTRO", 1],
+      ]);
+
+      // Dopo la preparazione il formato è bloccato come il resto dei prodotti.
+      expectOk(await svc.updateWarehouseData(actor("MAGAZZINO"), id, { packagesCount: 1, weightKg: 1 }));
+      expectOk(await svc.advanceStatus(actor("MAGAZZINO"), id, "PRONTA_RITIRO", { acknowledgeNoPieces: true }));
+      const locked = changed.map((i) => (i.sampleFormat === "MEZZE_DOGHE" ? { ...i, sampleFormat: "DOGHE_INTERE" } : i));
+      expectFail(await svc.updateRequestInfo(bo, id, info(c, locked)), /prodotti richiesti/);
+      expectOk(await svc.updateRequestInfo(bo, id, info(c, changed, { notes: "solo note" })));
+      expect((await getRequest(id)).notes).toBe("solo note");
     });
   });
 
@@ -304,8 +533,12 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
         expect(mail.body).toContain("Note: Consegna al mattino");
         expect(mail.body).toContain("Bolla di consegna richiesta: Sì");
         expect(mail.body).toContain(`/richieste/${mainId}`);
-        // L'indirizzo su più righe diventa una riga sola.
-        expect(mail.body).toContain("Destinazione: Via S. Vincenzo de Paoli 8, 24023 Clusone (BG)");
+        // Dati di presa in carico: destinatario, alla c.a., indirizzo su una riga, preavviso, formato.
+        expect(mail.body).toContain(`Destinatario: ${RECIPIENT}\nAlla c.a.: ${ATTENTION_OF}\n`);
+        expect(mail.body).toContain("Indirizzo: Via S. Vincenzo de Paoli 8, 24023 Clusone (BG)");
+        expect(mail.body).toContain(`Preavviso telefonico: Sì, tel. ${PHONE}`);
+        expect(mail.body).toContain(`- 2 × Mezze doghe — ${fx.products.a.description} (${fx.products.a.code})`);
+        expect(mail.body).toContain(`- 1 × Mezze doghe — ${fx.products.b.description} (${fx.products.b.code})`);
       }
     });
 
@@ -597,7 +830,9 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
         expect(mail.body).toContain("Numero di spedizione: 1Z 999 AA1");
         expect(mail.body).toContain("https://track.example.test/?n=1Z999AA1");
         expect(mail.body).toContain("Rif. DDT N° 13807");
-        expect(mail.body).toContain(`- 3 × ${fx.products.a.description} (${fx.products.a.code})`);
+        expect(mail.body).toContain(`- 3 × Mezze doghe — ${fx.products.a.description} (${fx.products.a.code})`);
+        // Il destinatario e il preavviso sono dati interni: non compaiono nella conferma al cliente.
+        expect(mail.body).not.toContain("Preavviso");
         expect(mail.body).toContain("N° colli: 2 — Peso: 4,00 kg");
         expect(mail.body).not.toMatch(/[{}]/);
         expect(mail.body).not.toContain("/richieste/");
@@ -715,7 +950,13 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
       const { customerEn, agent } = fx.contacts;
       const created = await svc.createRequest(
         actor("BACKOFFICE"),
-        info(customerEn.id, [{ productId: fx.products.b.id, quantity: 2 }]),
+        info(customerEn.id, [{ productId: fx.products.b.id, quantity: 2, sampleFormat: "DOGHE_INTERE" }], {
+          recipientName: customerEn.name,
+          attentionOf: null,
+          destinationAddress: "1 High Street\nLondon W1 1AA\nUnited Kingdom",
+          phoneNotice: false,
+          phoneNoticeNumber: null,
+        }),
         { sendToWarehouse: true },
       );
       const id = createdId(created);
@@ -723,6 +964,14 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
       expect(created.message).toMatch(/magazzino/);
       expect((await getRequest(id)).status).toBe("IN_PREPARAZIONE");
       expect((await getEvents(id)).map((e) => e.toStatus)).toEqual(["NUOVA", "IN_PREPARAZIONE"]);
+      // L'avviso al magazzino resta in italiano (formato compreso); senza «alla c.a.» la riga sparisce.
+      const [warehouseMail] = await getEmails(id, "AVVISO_MAGAZZINO");
+      if (isDefaultTemplate("AVVISO_MAGAZZINO", "it")) {
+        expect(warehouseMail.body).toContain(`Destinatario: ${customerEn.name}\nIndirizzo: 1 High Street, London W1 1AA, United Kingdom`);
+        expect(warehouseMail.body).not.toContain("Alla c.a.");
+        expect(warehouseMail.body).toContain("Preavviso telefonico: No");
+        expect(warehouseMail.body).toContain(`- 2 × Doghe intere — ${fx.products.b.description}`);
+      }
 
       expectOk(await svc.updateWarehouseData(actor("MAGAZZINO"), id, { packagesCount: 1, weightKg: 0.8 }));
       expectOk(await svc.advanceStatus(actor("MAGAZZINO"), id, "PRONTA_RITIRO", { acknowledgeNoPieces: true }));
@@ -762,6 +1011,9 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
         expect(mail.body).toContain("Track your shipment: https://track.example.test/?n=ABC123");
         expect(mail.body).not.toContain("Delivery note");
         expect(mail.body).toContain("Packages: 1 — Weight: 0.80 kg");
+        // Formato nella lingua del cliente.
+        expect(mail.body).toContain(`- 2 × Full-length planks — ${fx.products.b.description} (${fx.products.b.code})`);
+        expect(mail.body).not.toContain("Doghe intere");
       }
     });
 
@@ -936,7 +1188,59 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
       expect(series.find((p) => p.month === MONTH)?.shipped).toBeGreaterThanOrEqual(1);
 
       const rows = await history.getHistoryForExport({ contatto: fx.contacts.noEmail.name });
-      expect(rows.find((r) => r.id === id)).toMatchObject({ shipmentDate: null, shippedOn: PICKUP });
+      expect(rows.find((r) => r.id === id)).toMatchObject({
+        shipmentDate: null,
+        shippedOn: PICKUP,
+        recipientName: RECIPIENT,
+        attentionOf: ATTENTION_OF,
+        productItems: [{ code: fx.products.a.code, format: DEFAULT_FORMAT, note: null }],
+      });
+    });
+
+    it("storico: destinatario e formato nella tabella e nel CSV; la ricerca trova anche il destinatario", async () => {
+      const history = await import("@/lib/reports/history");
+      const exports = await import("@/lib/reports/exports");
+      const bo = actor("BACKOFFICE");
+      const { a, b } = fx.products;
+      const twoFormats = createdId(
+        await svc.createRequest(
+          bo,
+          info(
+            fx.contacts.noEmail.id,
+            [
+              { productId: a.id, quantity: 1, sampleFormat: "MAZZETTA" },
+              { productId: a.id, quantity: 1, sampleFormat: "ALTRO", formatNote: "listello 30 cm" },
+              { productId: b.id, quantity: 1, sampleFormat: null },
+            ],
+            { recipientName: `${fx.mark} DRVOTEK DOO`, attentionOf: null },
+          ),
+        ),
+      );
+
+      // Il contatto è «Senza email», il destinatario è un'altra ditta: la ricerca lo trova per entrambi.
+      const byRecipient = await history.getHistoryForExport({ contatto: `DRVOTEK ${fx.run}` });
+      expect(byRecipient.map((r) => r.id)).toEqual([twoFormats]);
+      const row = byRecipient[0];
+      expect(row.productItems).toEqual([
+        { code: a.code, format: "MAZZETTA", note: null },
+        { code: a.code, format: "ALTRO", note: "listello 30 cm" },
+        { code: b.code, format: null, note: null },
+      ]);
+      expect(exports.historyProductsText(row.productItems)).toBe(
+        `${a.code} (Mazzetta), ${a.code} (Altro: listello 30 cm), ${b.code}`,
+      );
+
+      const csv = exports.historyCsv(byRecipient);
+      const [header, line] = csv.replace(/^\uFEFF/, "").split("\r\n");
+      expect(header).toContain("Contatto;Destinatario;Alla c.a.;Agente;Paese;Prodotti;");
+      expect(line).toContain(`${fx.contacts.noEmail.name};${fx.mark} DRVOTEK DOO;;`);
+      expect(line).toContain(`;${a.code} (Mazzetta), ${a.code} (Altro: listello 30 cm), ${b.code};`);
+
+      const shipped = (await history.getHistoryForExport({ contatto: fx.contacts.noEmail.name })).find((r) => r.id === id);
+      expect(exports.historyCsv(shipped ? [shipped] : [])).toContain(`;${RECIPIENT};${ATTENTION_OF};`);
+      expect(exports.historyCsv(shipped ? [shipped] : [])).toContain(`;${a.code} (Mezze doghe);`);
+
+      expectOk(await svc.deleteRequest(bo, twoFormats));
     });
 
     it("«Completa senza email» registra come data di spedizione quella del ritiro", async () => {

@@ -9,7 +9,7 @@ il sistema avvisa cliente e agente e calcola i m² del mese da riportare nel CRM
 
 | Stato | Responsabile | Cosa fa per avanzare | Automazione |
 |---|---|---|---|
-| Nuova richiesta | Back office | Contatto, prodotti e quantità, destinazione, note, «bolla di consegna richiesta» → *Invia al magazzino* | Email al magazzino |
+| Nuova richiesta | Back office | Contatto e i [dati per la presa in carico](#dati-per-la-presa-in-carico): destinatario, alla c.a., indirizzo, codice + formato + quantità di ogni prodotto, preavviso telefonico (e numero); note, «bolla di consegna richiesta» → *Invia al magazzino* | Email al magazzino |
 | In preparazione | Magazzino | Colli, peso, misure di ogni pezzo (lunghezza × larghezza, quantità, note sullo stato) → *Pronta per il ritiro* | Se serve la bolla: email alla logistica |
 | Pronta per il ritiro | Logistica | Corriere, data di ritiro, bolla (generata in PDF o DDT caricato) → *Segna come spedita* | — |
 | Spedita | Logistica | Numero di tracking e data di spedizione | Email al cliente con l'agente in copia, nella lingua del cliente, DDT allegato → *Completata* |
@@ -20,6 +20,30 @@ solo l'amministratore riapre una richiesta completata. Le correzioni non inviano
 cliente era già partita, salvare i dati di spedizione non la ripete, la si reinvia con «Invia conferma».
 Una richiesta «Spedita» senza email del contatto (o con ritiro in sede) si può completare senza conferma.
 La bolla richiesta su una richiesta già «Pronta per il ritiro» fa partire subito l'avviso alla logistica.
+
+### Dati per la presa in carico
+
+BGP prende in carico una richiesta di campionatura (Italia ed estero) solo con questi dati, che clienti e
+agenti non mandano quasi mai completi (elenco fornito da BGP, 23/09/2026). *Invia al magazzino* resta bloccato
+finché mancano e la pagina della richiesta elenca cosa manca; la bozza si può salvare anche incompleta.
+
+| Dato | Nel gestionale |
+|---|---|
+| **Ragione sociale** della ditta o **cognome e nome** del destinatario | «Destinatario», obbligatorio |
+| Se si spedisce a una ditta, la **persona** a cui è destinata | «Alla c.a.»: promemoria non bloccante quando il destinatario sembra una ditta (non sempre si può sapere) |
+| **Indirizzo** di consegna | Solo l'indirizzo: via, CAP, città, provincia, paese se estero |
+| **Codice** del prodotto | Una riga per prodotto (anche lo stesso prodotto in due formati) |
+| **Formato**: doghe intere, mezze doghe, mazzette, pannelli, espositore completo o solo culle… | Obbligatorio per ogni riga; «Altro» con descrizione. Proposto dal codice (MAZZ… mazzetta, PAN… pannello) |
+| **Quantità** | Per ogni riga |
+| Serve il **preavviso telefonico** prima della consegna? | Sì/No, da indicare sempre |
+| Se sì, il **numero** da usare | Obbligatorio con «Sì»; finisce sulla bolla come sul DDT di BGP («PREAVVISO TASSATIVO 1GG PRIMA TEL. …») |
+
+Il **modulo pubblico** chiede gli stessi dati, così le richieste di agenti e clienti arrivano già
+complete; lì «Alla c.a.» è obbligatorio a meno di spuntare «il destinatario è un privato».
+Destinatario, alla c.a., formato e preavviso compaiono nelle email al magazzino e alla logistica; la
+conferma al cliente riporta il formato nella lingua del cliente. Le richieste registrate prima di questa
+regola sono state migrate (la prima riga dell'indirizzo è diventata il destinatario; mazzette e pannelli
+hanno già il formato): se sono ancora «Nuova richiesta» vanno completate prima dell'invio.
 
 **m² e report**: una richiesta conta nel mese della data di spedizione; se la logistica non l'ha inserita
 vale la data di ritiro del corriere (obbligatoria per «Spedita»). Report m², export CSV per il CRM e
@@ -32,7 +56,7 @@ cruscotto usano tutti la stessa regola.
 | Back office | Richieste aperte | Creare e modificare richieste, anagrafiche, import |
 | Magazzino (×2, da telefono) | Coda magazzino | Colli, peso, pezzi, «pronta per il ritiro» |
 | Logistica | Pronte per il ritiro · Bolle da preparare · Spedite senza tracking | Spedizione, bolla, DDT, tracking, costi |
-| Direzione | Cruscotto · Storico completo | Sola lettura: stato, volumi, costi per cliente, conteggi per contatto/prodotto/paese |
+| Direzione | Cruscotto · Storico completo | Sola lettura: stato, volumi, costi per cliente, conteggi per contatto/prodotto/paese; storico ed export CSV con destinatario e formato dei campioni |
 | Ufficio CRM | Report m² mensile | m² per prodotto del mese, export CSV per il CRM |
 | Amministratore | tutto | Utenti, destinatari email, template, corrieri, dati della bolla, registro email |
 
@@ -50,7 +74,7 @@ npm install
 npm run db:migrate
 npm run db:seed               # amministratore da SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD + corrieri
 npm run import -- --contatti ../Lista_clienti_Airtable.xlsx --prodotti "../Product list.xlsx"
-npm run db:seed-demo          # facoltativo: utenti demo per ruolo e richieste di esempio
+npm run db:seed-demo          # facoltativo: utenti demo per ruolo e richieste di esempio (solo su database senza richieste)
 npm run dev                   # http://localhost:3000
 ```
 

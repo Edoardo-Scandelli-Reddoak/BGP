@@ -7,6 +7,7 @@ import {
   contacts,
   emailLog,
   pieces,
+  products,
   requestItems,
   sampleRequests,
   statusEvents,
@@ -32,7 +33,11 @@ export async function listReadyForPickup() {
     .select({
       id: sampleRequests.id,
       receivedAt: sampleRequests.receivedAt,
+      recipientName: sampleRequests.recipientName,
+      attentionOf: sampleRequests.attentionOf,
       destinationAddress: sampleRequests.destinationAddress,
+      phoneNotice: sampleRequests.phoneNotice,
+      phoneNoticeNumber: sampleRequests.phoneNoticeNumber,
       packagesCount: sampleRequests.packagesCount,
       weightKg: sampleRequests.weightKg,
       deliveryFormRequired: sampleRequests.deliveryFormRequired,
@@ -51,9 +56,42 @@ export async function listReadyForPickup() {
     .where(eq(sampleRequests.status, "PRONTA_RITIRO"))
     .orderBy(asc(sampleRequests.receivedAt), asc(sampleRequests.id))
     .limit(LIST_LIMIT);
+  const items = await listItemsSummary(rows.map((r) => r.id));
   // Stessa regola del flusso: bolla pronta se spuntata, con numero DDT o con il DDT caricato.
-  return rows.map((r) => ({ ...r, bollaReady: bollaSatisfied({ ...r, hasDdtAttachment: r.hasDdt }) }));
+  return rows.map((r) => ({
+    ...r,
+    items: items.get(r.id) ?? [],
+    bollaReady: bollaSatisfied({ ...r, hasDdtAttachment: r.hasDdt }),
+  }));
 }
+
+/** Righe richieste (codice, quantità, formato) delle richieste indicate, raggruppate per richiesta. */
+async function listItemsSummary(requestIds: number[]) {
+  const rows = requestIds.length
+    ? await db
+        .select({
+          id: requestItems.id,
+          requestId: requestItems.requestId,
+          quantity: requestItems.quantity,
+          sampleFormat: requestItems.sampleFormat,
+          formatNote: requestItems.formatNote,
+          code: products.code,
+        })
+        .from(requestItems)
+        .innerJoin(products, eq(products.id, requestItems.productId))
+        .where(inArray(requestItems.requestId, requestIds))
+        .orderBy(asc(requestItems.id))
+    : [];
+  const byRequest = new Map<number, typeof rows>();
+  for (const row of rows) {
+    const list = byRequest.get(row.requestId);
+    if (list) list.push(row);
+    else byRequest.set(row.requestId, [row]);
+  }
+  return byRequest;
+}
+
+export type ItemSummaryRow = ReadyForPickupRow["items"][number];
 
 export type ReadyForPickupRow = Awaited<ReturnType<typeof listReadyForPickup>>[number];
 
@@ -106,6 +144,11 @@ export async function listShippedAwaitingTracking() {
       trackingNumber: sampleRequests.trackingNumber,
       shipmentDate: sampleRequests.shipmentDate,
       deliveryFormRequired: sampleRequests.deliveryFormRequired,
+      recipientName: sampleRequests.recipientName,
+      attentionOf: sampleRequests.attentionOf,
+      destinationAddress: sampleRequests.destinationAddress,
+      phoneNotice: sampleRequests.phoneNotice,
+      phoneNoticeNumber: sampleRequests.phoneNoticeNumber,
       contactName: contacts.name,
       contactEmail: contacts.email,
       carrierName: carriers.name,

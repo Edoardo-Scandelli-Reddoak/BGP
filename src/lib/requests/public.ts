@@ -16,15 +16,19 @@ import {
 import { fail, zodFieldErrors, type ActionResult } from "@/lib/action-result";
 import { isValidEmail, parseEmailList } from "@/lib/email/recipients";
 import { formatDate, LANGUAGE_LABELS, requestCode } from "@/lib/format";
+import { looksLikeCompany, SAMPLE_FORMATS } from "@/lib/sample-formats";
 import { likePattern } from "@/lib/search";
 import { getSettings } from "@/lib/settings";
 import { dbId } from "@/lib/validation";
+import { mergeItems, normalizeMultiline, optionalText } from "./input";
 
 /**
  * Richieste dal modulo pubblico /richiedi-campioni (senza login).
  * Riconosce agente e cliente dall'email, crea i contatti mancanti da verificare (needsReview)
  * e inserisce la richiesta in «Nuova richiesta». Nessuna email automatica in questa fase.
  * Le differenze rispetto all'anagrafica (indirizzo, email del cliente) finiscono nelle note.
+ * Il modulo chiede tutti i dati che BGP richiede per prendere in carico una richiesta (destinatario,
+ * alla c.a., indirizzo, codice, formato e quantità, preavviso telefonico), così arriva già completa.
  */
 
 export const PUBLIC_MAX_PRODUCTS = 30;
@@ -82,35 +86,65 @@ function checkFormToken(token: unknown, now = Date.now()): FormTokenCheck {
   return "ok";
 }
 
-const optionalText = (max: number) =>
-  z
-    .string()
-    .trim()
-    .max(max, `Massimo ${max} caratteri`)
-    .optional()
-    .transform((v) => (v ? v : null));
-
 const email = z
-  .string()
+  .string({ error: "Inserisci l'indirizzo email" })
   .trim()
   .min(1, "Inserisci l'indirizzo email")
   .max(200, "Indirizzo troppo lungo")
   .refine(isValidEmail, "Indirizzo email non valido")
   .transform((v) => v.toLowerCase());
 
+/** Telefono facoltativo: cifre, spazi e + ( ) . / - */
+const optionalPhone = z
+  .string()
+  .trim()
+  .max(40, "Numero troppo lungo")
+  .refine((v) => !v || /^[+0-9 ()./-]{5,40}$/.test(v), "Numero di telefono non valido")
+  .nullish()
+  .transform((v) => (v ? v : null));
+
+const publicItemInput = z
+  .object({
+    productId: dbId,
+    quantity: z.coerce
+      .number()
+      .int("Quantità non valida")
+      .min(1, "Quantità minima 1")
+      .max(PUBLIC_MAX_QUANTITY, `Massimo ${PUBLIC_MAX_QUANTITY} pezzi per prodotto`),
+    /** Obbligatorio nel modulo pubblico: senza formato BGP non può preparare il campione. */
+    sampleFormat: z.preprocess(
+      (v) => (v === "" || v === null ? undefined : v),
+      z.enum(SAMPLE_FORMATS, { error: "Scegli il formato del campione" }),
+    ),
+    formatNote: optionalText(200),
+  })
+  .refine((i) => i.sampleFormat !== "ALTRO" || Boolean(i.formatNote), {
+    path: ["formatNote"],
+    message: "Descrivi il formato richiesto",
+  });
+
+/** Valore già letto come oggetto (per i controlli tra campi anche quando altri campi sono errati). */
+const isObjectPayload = (p: { value: unknown }) => typeof p.value === "object" && p.value !== null;
+
 export const publicRequestInput = z.object({
   requesterType: z.enum(["AGENTE", "CLIENTE"], { error: "Indica se sei un agente o un cliente" }),
-  requesterName: z.string().trim().min(2, "Inserisci nome e cognome").max(120, "Massimo 120 caratteri"),
-  requesterEmail: email,
-  requesterPhone: z
-    .string()
+  requesterName: z
+    .string({ error: "Inserisci nome e cognome" })
     .trim()
-    .max(40, "Numero troppo lungo")
-    .refine((v) => !v || /^[+0-9 ()./-]{5,40}$/.test(v), "Numero di telefono non valido")
-    .optional()
-    .transform((v) => (v ? v : null)),
-  /** Agente: ragione sociale del cliente destinatario. Cliente: la propria ragione sociale. */
-  recipientName: z.string().trim().min(2, "Inserisci la ragione sociale").max(200, "Massimo 200 caratteri"),
+    .min(2, "Inserisci nome e cognome")
+    .max(120, "Massimo 120 caratteri"),
+  requesterEmail: email,
+  requesterPhone: optionalPhone,
+  /** Destinatario della spedizione: ragione sociale della ditta o cognome e nome. */
+  recipientName: z
+    .string({ error: "Indica il destinatario" })
+    .trim()
+    .min(2, "Indica il destinatario: ragione sociale della ditta o cognome e nome")
+    .max(200, "Massimo 200 caratteri"),
+  /** Spunta «Il destinatario è un privato»: in quel caso «alla c.a.» non serve. */
+  recipientIsPrivate: z.boolean().default(false),
+  /** Persona della ditta a cui è destinata la spedizione («alla c.a. di»): obbligatoria per le ditte. */
+  attentionOf: optionalText(200),
   /** Solo per l'agente: email del cliente, che riceverà la conferma di spedizione. */
   recipientEmail: z
     .string()
@@ -119,25 +153,24 @@ export const publicRequestInput = z.object({
     .refine((v) => !v || isValidEmail(v), "Indirizzo email non valido")
     .optional()
     .transform((v) => (v ? v.toLowerCase() : null)),
+  /** Solo l'indirizzo (via, CAP, città, provincia): il destinatario è in recipientName. */
   address: z
-    .string()
+    .string({ error: "Indica l'indirizzo di consegna" })
     .trim()
-    .min(8, "Inserisci l'indirizzo completo: via, CAP, città")
-    .max(1000, "Massimo 1000 caratteri"),
+    .min(1, "Indica l'indirizzo di consegna")
+    .min(8, "Indica l'indirizzo completo: via e numero civico, CAP, città e provincia")
+    .max(1000, "Massimo 1000 caratteri")
+    // Senza CAP né numero civico il corriere non consegna.
+    .refine((v) => /\d/.test(v), "Indica l'indirizzo completo: via e numero civico, CAP, città e provincia")
+    .transform(normalizeMultiline),
   country: optionalText(80),
   language: z.enum(languageEnum.enumValues, { error: "Seleziona la lingua" }),
+  /** Preavviso telefonico prima della consegna: nessun valore predefinito, va scelto. */
+  phoneNotice: z.boolean({ error: "Indica se serve il preavviso telefonico prima della consegna" }),
+  phoneNoticeNumber: optionalPhone,
   notes: optionalText(3000),
   items: z
-    .array(
-      z.object({
-        productId: dbId,
-        quantity: z.coerce
-          .number()
-          .int("Quantità non valida")
-          .min(1, "Quantità minima 1")
-          .max(PUBLIC_MAX_QUANTITY, `Massimo ${PUBLIC_MAX_QUANTITY} pezzi per prodotto`),
-      }),
-    )
+    .array(publicItemInput, { error: "Aggiungi almeno un prodotto" })
     .min(1, "Aggiungi almeno un prodotto")
     .max(PUBLIC_MAX_PRODUCTS, `Massimo ${PUBLIC_MAX_PRODUCTS} prodotti per richiesta`),
   consent: z.literal(true, { error: "Per inviare la richiesta devi acconsentire al trattamento dei dati" }),
@@ -145,7 +178,18 @@ export const publicRequestInput = z.object({
   website: z.string().optional(),
   /** Gettone firmato del modulo (issuePublicFormToken), controllato prima della validazione. */
   formToken: z.string().optional(),
-});
+})
+  // Controlli tra campi eseguiti anche se altri campi sono errati: tutti gli errori in un solo invio.
+  .refine((v) => v.recipientIsPrivate === true || Boolean(v.attentionOf), {
+    path: ["attentionOf"],
+    message: "Indica la persona a cui è destinata, oppure spunta «Il destinatario è un privato»",
+    when: isObjectPayload,
+  })
+  .refine((v) => v.phoneNotice !== true || Boolean(v.phoneNoticeNumber), {
+    path: ["phoneNoticeNumber"],
+    message: "Indica il numero di telefono per il preavviso",
+    when: isObjectPayload,
+  });
 
 export type PublicRequestInput = z.input<typeof publicRequestInput>;
 
@@ -154,13 +198,18 @@ export type PublicRequestResult = {
   code: string;
   /** Frase per la pagina di ringraziamento: chi riceverà la conferma di spedizione. */
   confirmation: string;
+  /** Destinatario dei campioni («Rossi S.r.l., alla c.a. di Mario Bianchi»), per la pagina di ringraziamento. */
+  recipient: string;
 };
 
-/** Errori dei prodotti (items.3.quantity) mostrati anche sul campo «items». */
+/**
+ * Errori dei prodotti: quelli di riga (items.3.sampleFormat) restano sulla riga, e il campo «items»
+ * riceve un richiamo generale (visibile accanto alla ricerca prodotti).
+ */
 function publicFieldErrors(issues: z.core.$ZodIssue[]): Record<string, string> {
   const errors = zodFieldErrors(issues);
-  for (const [key, message] of Object.entries(errors)) {
-    if (key.startsWith("items.") && !errors.items) errors.items = message;
+  if (!errors.items && Object.keys(errors).some((key) => key.startsWith("items."))) {
+    errors.items = "Completa i dati dei prodotti evidenziati (formato e quantità).";
   }
   return errors;
 }
@@ -235,13 +284,6 @@ async function findClientByName(tx: Tx, name: string, agentId: number): Promise<
   return row ?? null;
 }
 
-/** Unisce le righe dello stesso prodotto sommando le quantità. */
-function mergeItems(items: { productId: number; quantity: number }[]) {
-  const map = new Map<number, number>();
-  for (const i of items) map.set(i.productId, (map.get(i.productId) ?? 0) + i.quantity);
-  return [...map.entries()].map(([productId, quantity]) => ({ productId, quantity }));
-}
-
 /** Indirizzo ridotto a lettere e cifre senza accenti, per confronti tolleranti sulla forma. */
 function addressKey(address: string): string {
   return address
@@ -268,7 +310,7 @@ function withCountry(address: string, country: string | null): string {
 
 const SPAM_RESULT: ActionResult<PublicRequestResult> = {
   ok: true,
-  data: { code: "", confirmation: "" },
+  data: { code: "", confirmation: "", recipient: "" },
   message: "Richiesta ricevuta.",
 };
 
@@ -306,11 +348,14 @@ export async function createPublicRequest(
   if (!parsed.success) return fail("Controlla i campi evidenziati.", publicFieldErrors(parsed.error.issues));
   const input = parsed.data;
 
+  // Stesso prodotto nello stesso formato: una sola riga; in formati diversi resta su righe separate.
   const items = mergeItems(input.items);
   if (items.some((i) => i.quantity > PUBLIC_MAX_QUANTITY)) {
-    const msg = `Massimo ${PUBLIC_MAX_QUANTITY} pezzi per prodotto.`;
+    const msg = `Massimo ${PUBLIC_MAX_QUANTITY} pezzi per prodotto nello stesso formato.`;
     return fail(msg, { items: msg });
   }
+  const recipientName = input.recipientName.replace(/\s+/g, " ");
+  const attentionOf = input.recipientIsPrivate ? null : input.attentionOf;
   const found = await db
     .select({ id: products.id, active: products.active })
     .from(products)
@@ -349,6 +394,9 @@ export async function createPublicRequest(
     const today = formatDate(new Date());
     const meta: string[] = [];
     if (input.requesterPhone) meta.push(`Telefono del richiedente: ${input.requesterPhone}`);
+    if (input.recipientIsPrivate && looksLikeCompany(recipientName)) {
+      meta.push("Il richiedente ha indicato che il destinatario è un privato (nessuna persona «alla c.a.»).");
+    }
 
     let contact: MatchedContact | null;
     let createdNow = false;
@@ -361,7 +409,7 @@ export async function createPublicRequest(
           .insert(contacts)
           .values({
             type: "CLIENTE",
-            name: input.recipientName,
+            name: recipientName,
             email: input.requesterEmail,
             phone: input.requesterPhone,
             defaultAddress: input.address,
@@ -382,13 +430,13 @@ export async function createPublicRequest(
       contact = input.recipientEmail
         ? await findContactByEmail(tx, input.recipientEmail, "CLIENTE", agent?.id)
         : null;
-      if (!contact && agent) contact = await findClientByName(tx, input.recipientName, agent.id);
+      if (!contact && agent) contact = await findClientByName(tx, recipientName, agent.id);
       if (!contact) {
         const [created] = await tx
           .insert(contacts)
           .values({
             type: "CLIENTE",
-            name: input.recipientName,
+            name: recipientName,
             email: input.recipientEmail,
             defaultAddress: input.address,
             country: input.country,
@@ -446,7 +494,11 @@ export async function createPublicRequest(
         status: "NUOVA",
         source: "MODULO_PUBBLICO",
         contactId: contact.id,
-        destinationAddress: `${input.recipientName}\n${withCountry(input.address, input.country)}`,
+        recipientName,
+        attentionOf,
+        destinationAddress: withCountry(input.address, input.country),
+        phoneNotice: input.phoneNotice,
+        phoneNoticeNumber: input.phoneNotice ? input.phoneNoticeNumber : null,
         notes,
         deliveryFormRequired: false,
         requesterName: input.requesterName,
@@ -454,7 +506,15 @@ export async function createPublicRequest(
         requesterIp,
       })
       .returning({ id: sampleRequests.id });
-    await tx.insert(requestItems).values(items.map((i) => ({ ...i, requestId: request.id })));
+    await tx.insert(requestItems).values(
+      items.map((i) => ({
+        requestId: request.id,
+        productId: i.productId,
+        quantity: i.quantity,
+        sampleFormat: i.sampleFormat,
+        formatNote: i.formatNote,
+      })),
+    );
     await tx.insert(statusEvents).values({
       requestId: request.id,
       fromStatus: null,
@@ -464,6 +524,7 @@ export async function createPublicRequest(
     });
 
     const code = requestCode(request.id);
-    return { ok: true, data: { code, confirmation }, message: `Richiesta ${code} ricevuta.` };
+    const recipient = attentionOf ? `${recipientName}, alla c.a. di ${attentionOf}` : recipientName;
+    return { ok: true, data: { code, confirmation, recipient }, message: `Richiesta ${code} ricevuta.` };
   });
 }

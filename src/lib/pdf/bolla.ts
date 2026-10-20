@@ -2,14 +2,16 @@ import "server-only";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type RGB } from "pdf-lib";
 import { formatDate, formatDateTime, formatNumber, requestCode, todayIso } from "@/lib/format";
 import type { RequestDetail } from "@/lib/requests/queries";
+import { sampleFormatText } from "@/lib/sample-formats";
 import type { AppSettings } from "@/lib/settings";
 import { clampLines, makeSanitizer, wrapText, type Sanitizer } from "./text";
 
 /**
  * Bolla di consegna (documento di trasporto) in PDF, A4, sul modello del DDT di BGP:
- * intestazione aziendale, numero e data, causale, destinatario e luogo di destinazione,
- * tabella articoli (anche su più pagine, con intestazione ripetuta), note, riquadro
- * colli/aspetto/porto/peso/data/vettore e spazi per le firme.
+ * intestazione aziendale, numero e data, causale, cessionario (il contatto) e luogo di
+ * destinazione (destinatario, «alla c.a.», indirizzo di consegna), tabella articoli con il
+ * formato del campione (anche su più pagine, con intestazione ripetuta), preavviso telefonico,
+ * note, riquadro colli/aspetto/porto/peso/data/vettore e spazi per le firme.
  */
 
 const PAGE_W = 595.28;
@@ -51,6 +53,27 @@ const C = {
 };
 
 type Fonts = { regular: PDFFont; bold: PDFFont; italic: PDFFont };
+
+const NOTICE_SIZE = 10;
+const NOTICE_LINE_H = 13;
+
+/** Confronto di indirizzi senza maiuscole, punteggiatura e a capo. */
+function addressKey(value: string): string {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+/**
+ * Paese da stampare nel luogo di destinazione: quello del contatto, ma solo se la consegna è al
+ * suo indirizzo in anagrafica e il paese non è già scritto (per gli altri indirizzi il back office
+ * lo indica nell'indirizzo stesso: meglio nessun paese che uno sbagliato).
+ */
+function destinationCountry(detail: RequestDetail): string | null {
+  const country = detail.contact.country?.trim();
+  const address = detail.destinationAddress.trim();
+  if (!country || !address || addressKey(address).includes(addressKey(country))) return null;
+  const home = detail.contact.defaultAddress?.trim();
+  return home && addressKey(home) === addressKey(address) ? country.toUpperCase() : null;
+}
 
 type TextOpts = { size?: number; font?: PDFFont; color?: RGB };
 
@@ -188,9 +211,13 @@ class BollaWriter {
     return { bottom: top + 40, pageLabelBaseline: top + 30 };
   }
 
-  /** Riquadri "Destinatario" e "Luogo di destinazione" (solo prima pagina). */
+  /**
+   * Riquadri "Cessionario" (il contatto, con il suo indirizzo in anagrafica) e "Luogo di
+   * destinazione" (destinatario, «alla c.a.», indirizzo di consegna, preavviso), solo prima pagina.
+   */
   drawAddressBoxes(page: PDFPage, top: number): number {
-    const { contact } = this.detail;
+    const { detail } = this;
+    const { contact } = detail;
     const gap = 10;
     const boxW = (CONTENT_W - gap) / 2;
     const textW = boxW - 2 * PAD;
@@ -207,19 +234,26 @@ class BollaWriter {
     if (contact.country?.trim()) left.push(...toLines(contact.country.toUpperCase()));
     if (contact.phone?.trim()) left.push(...toLines(`Tel. ${contact.phone}`));
 
-    const destRaw = this.detail.destinationAddress.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    const right: Line[] = [];
-    if (destRaw[0]?.toLowerCase() === contact.name.trim().toLowerCase()) {
-      right.push(...toLines(destRaw.shift(), true));
-    } else {
-      right.push(...toLines(contact.name, true));
-    }
-    right.push(...toLines(destRaw.join("\n")));
-
+    // Luogo di destinazione: in testa destinatario e «alla c.a.», in fondo paese e telefono del
+    // preavviso; se le righe sono troppe si accorcia l'indirizzo, non i dati per il corriere.
     const maxLines = 9;
+    const head: Line[] = [...toLines(detail.recipientName?.trim() || contact.name, true)];
+    if (detail.attentionOf?.trim()) head.push(...toLines(`Alla c.a.: ${detail.attentionOf.trim()}`));
+    const tail: Line[] = [];
+    const country = destinationCountry(detail);
+    if (country) tail.push(...toLines(country));
+    const noticeNumber = detail.phoneNoticeNumber?.trim();
+    if (detail.phoneNotice && noticeNumber) tail.push(...toLines(`Tel. ${noticeNumber} (preavviso)`, true));
+    const address = toLines(detail.destinationAddress);
+    const room = Math.max(1, maxLines - head.length - tail.length);
+    const right: Line[] = [...head, ...address.slice(0, room), ...tail];
+    if (address.length > room) {
+      const last = right[head.length + room - 1];
+      last.text = clampLines([last.text, ""], 1, this.fonts.regular, BODY_SIZE, textW)[0];
+    }
+
     const leftLines = left.slice(0, maxLines);
-    const rightLines = right.slice(0, maxLines);
-    const h = Math.max(84, 32 + Math.max(leftLines.length, rightLines.length) * LINE_H + 6);
+    const h = Math.max(84, 32 + Math.max(leftLines.length, right.length) * LINE_H + 6);
 
     const draw = (x: number, title: string, lines: Line[]) => {
       this.rect(page, x, top, boxW, h, { border: C.border });
@@ -231,8 +265,8 @@ class BollaWriter {
         });
       });
     };
-    draw(MARGIN, "Destinatario", leftLines);
-    draw(MARGIN + boxW + gap, "Luogo di destinazione", rightLines);
+    draw(MARGIN, "Cessionario", leftLines);
+    draw(MARGIN + boxW + gap, "Luogo di destinazione", right);
     return top + h + 10;
   }
 
@@ -269,9 +303,13 @@ class BollaWriter {
   drawItems() {
     const { detail } = this;
     const descW = COL_DESC_W - 2 * PAD;
+    // Lo stesso prodotto può comparire in due formati: i m² misurati vanno sulla prima riga.
+    const m2Shown = new Set<number>();
     for (const item of detail.items) {
       const product = item.product;
-      const label = product.description?.trim() ? `${product.description.trim()} (${product.code})` : product.code;
+      const name = product.description?.trim() ? `${product.description.trim()} (${product.code})` : product.code;
+      const format = sampleFormatText(item.sampleFormat, item.formatNote);
+      const label = format ? `${format} — ${name}` : name;
       const descLines = clampLines(this.wrap(label, this.fonts.regular, BODY_SIZE, descW), 10, this.fonts.regular, BODY_SIZE, descW);
       const noteLines = item.notes?.trim()
         ? clampLines(this.wrap(`Nota: ${item.notes.trim()}`, this.fonts.italic, NOTE_SIZE, descW), 4, this.fonts.italic, NOTE_SIZE, descW)
@@ -291,7 +329,8 @@ class BollaWriter {
       );
       this.textCenter(page, "CAD", COL_X.um + COL_W.um / 2, first);
       this.textRight(page, formatNumber(item.quantity, 0), COL_X.qty + COL_W.qty - PAD, first);
-      const m2 = detail.m2ByProduct.get(item.productId);
+      const m2 = m2Shown.has(item.productId) ? undefined : detail.m2ByProduct.get(item.productId);
+      m2Shown.add(item.productId);
       if (m2 && m2 > 0) this.textRight(page, formatNumber(m2, 2), COL_X.m2 + COL_W.m2 - PAD, first);
       this.y += h;
       this.hline(page, MARGIN, MARGIN + CONTENT_W, this.y - 2, C.rule, 0.4);
@@ -309,6 +348,24 @@ class BollaWriter {
       if (detail.totalM2 > 0) this.textRight(page, formatNumber(detail.totalM2, 2), COL_X.m2 + COL_W.m2 - PAD, baseline, bold);
       this.y += LINE_H + 8;
     }
+  }
+
+  /**
+   * Preavviso telefonico in grassetto nel corpo, come sul DDT di BGP («PREAVVISO TASSATIVO 1GG
+   * PRIMA TEL. …»): il corriere deve chiamare il destinatario prima della consegna.
+   */
+  drawPhoneNotice() {
+    if (this.detail.phoneNotice !== true) return;
+    const number = this.detail.phoneNoticeNumber?.trim() || "________________";
+    const width = COL_DESC_W - 2 * PAD;
+    const lines = this.wrap(`PREAVVISO TELEFONICO TASSATIVO 1 GG PRIMA — TEL. ${number}`, this.fonts.bold, NOTICE_SIZE, width);
+    this.y += 8;
+    this.ensureSpace(lines.length * NOTICE_LINE_H + 4);
+    for (const line of lines) {
+      this.text(this.page, line, COL_X.desc + PAD, this.y + 10, { size: NOTICE_SIZE, font: this.fonts.bold });
+      this.y += NOTICE_LINE_H;
+    }
+    this.y += 2;
   }
 
   /** Note della richiesta (istruzioni di consegna), nella colonna descrizione come sul DDT di BGP. */
@@ -423,6 +480,7 @@ export async function generateBollaPdf(detail: RequestDetail, settings: AppSetti
   const writer = new BollaWriter(pdf, fonts, clean, detail, settings, clean(docNumber), docDate);
   writer.newPage();
   writer.drawItems();
+  writer.drawPhoneNotice();
   writer.drawNotes();
   // Il riquadro finale va sull'ultima pagina: se non c'è spazio, se ne aggiunge una.
   if (writer.y + 4 > FOOTER_TOP - 8) writer.newPage();

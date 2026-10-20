@@ -28,5 +28,12 @@ e i due PDF di analisi nella cartella superiore.
   `getAuthorizedUser(permesso)`.
 - Server action: file `actions.ts` del modulo, restituiscono `ActionResult` (`src/lib/action-result.ts`) e
   dopo una modifica chiamano `revalidatePath("/", "layout")`.
+- Dati per la presa in carico (BGP): destinatario e indirizzo obbligatori già per salvare; formato del
+  campione per ogni riga e preavviso telefonico Sì/No (con numero se Sì) obbligatori per «Invia al magazzino»
+  (`transitionProblems` in `workflow.ts`); «alla c.a.» mai bloccante (solo suggerimento; obbligatorio nel modulo
+  pubblico per le ditte). Formati, etichette per lingua e proposte dal codice in `src/lib/sample-formats.ts`.
+- Configurazioni di BGP (Impostazioni → Costi, Bolla di consegna, Export CRM): tipi, valori predefiniti e logica pura
+  in `src/lib/config/`, lette con `getSettings()`/`getSetting()`; costi in SQL in `src/lib/requests/costs.ts`,
+  export e invio mensile in `src/lib/crm-export/run.ts` (scheduler in `src/instrumentation.ts`).
 - Componenti UI condivisi in `src/components/ui/`; formattazione (date, m², euro, codice richiesta) in `src/lib/format.ts`.
 - Dopo aver aggiunto route: `npx next typegen` per i tipi `PageProps<"/percorso">`.

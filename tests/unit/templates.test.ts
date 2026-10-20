@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EmailKind, Language } from "@/db/schema";
+import { phoneNoticeText } from "@/lib/email/notifications";
 import {
   DEFAULT_TEMPLATES,
   EMAIL_KIND_DESCRIPTIONS,
@@ -14,7 +15,7 @@ import {
   type TemplateVars,
 } from "@/lib/email/templates";
 
-type AutoKind = Exclude<EmailKind, "TEST">;
+type AutoKind = Exclude<EmailKind, "TEST" | "EXPORT_CRM">;
 
 const FULL_VARS: TemplateVars = {
   codice_richiesta: "CAMP-00042",
@@ -22,8 +23,11 @@ const FULL_VARS: TemplateVars = {
   cliente: "CORVINO SRL",
   email_cliente: "info@corvino.example",
   agente: "LOMBARDI S.N.C. DI P. E F. LOMBARDI",
-  prodotti: "- 2 × Rovere naturale (10120D001)\n- 1 × Noce (10120N002)",
+  prodotti: "- 2 × Mezze doghe — Rovere naturale (10120D001)\n- 1 × Mazzetta — Noce (10120N002)",
+  destinatario: "ORBIS FURNITURE SRL",
+  alla_ca: "Sig. Rossi",
   destinazione: "VIA F. MERCANTI, 46/R, 16143 GENOVA (GE)",
+  preavviso: "Sì, tel. 328 3556565",
   note: "Consegnare al mattino",
   bolla_richiesta: "Sì",
   colli: "2",
@@ -140,6 +144,56 @@ describe("unknownPlaceholders", () => {
 
   it("PLACEHOLDERS documenta esattamente tutte le variabili dei template", () => {
     expect(PLACEHOLDERS.map((p) => p.key).sort()).toEqual(Object.keys(FULL_VARS).sort());
+  });
+
+  it("riconosce i segnaposto dei dati richiesti da BGP (destinatario, alla c.a., preavviso)", () => {
+    expect(unknownPlaceholders("{destinatario} {alla_ca} {preavviso} {destinazione}")).toEqual([]);
+    for (const key of ["destinatario", "alla_ca", "preavviso"]) {
+      expect(PLACEHOLDERS.find((p) => p.key === key)?.label, key).toBeTruthy();
+    }
+  });
+});
+
+describe("dati di presa in carico nelle email (destinatario, alla c.a., formato, preavviso)", () => {
+  const warehouse = DEFAULT_TEMPLATES.AVVISO_MAGAZZINO.it!;
+  const bolla = DEFAULT_TEMPLATES.AVVISO_BOLLA.it!;
+
+  it.each([
+    ["AVVISO_MAGAZZINO", warehouse],
+    ["AVVISO_BOLLA", bolla],
+  ] as const)("%s contiene destinatario, alla c.a., indirizzo, preavviso e prodotti", (_kind, tpl) => {
+    for (const key of ["destinatario", "alla_ca", "destinazione", "preavviso", "prodotti"]) {
+      expect(tpl.body, key).toContain(`{${key}}`);
+    }
+  });
+
+  it("avviso magazzino completo: ogni dato sulla sua riga", () => {
+    const body = renderTemplate(warehouse, FULL_VARS).body;
+    expect(body).toContain("Destinatario: ORBIS FURNITURE SRL\nAlla c.a.: Sig. Rossi\nIndirizzo: VIA F. MERCANTI, 46/R, 16143 GENOVA (GE)");
+    expect(body).toContain("Preavviso telefonico: Sì, tel. 328 3556565");
+    expect(body).toContain("Prodotti (quantità × formato):\n- 2 × Mezze doghe — Rovere naturale (10120D001)\n- 1 × Mazzetta — Noce");
+  });
+
+  it("senza «alla c.a.» e con preavviso non indicato le righe spariscono", () => {
+    const body = renderTemplate(warehouse, { ...FULL_VARS, alla_ca: "", preavviso: "" }).body;
+    expect(body).not.toContain("Alla c.a.");
+    expect(body).not.toContain("Preavviso telefonico");
+    expect(body).toContain("Destinatario: ORBIS FURNITURE SRL\nIndirizzo: ");
+  });
+
+  it("preavviso «No» resta visibile (il magazzino sa che è stato chiesto)", () => {
+    const body = renderTemplate(bolla, { ...FULL_VARS, preavviso: "No" }).body;
+    expect(body).toContain("Preavviso telefonico: No");
+  });
+
+  it("phoneNoticeText: sì con numero, no, non indicato — nella lingua del destinatario", () => {
+    expect(phoneNoticeText(true, " 328 3556565 ")).toBe("Sì, tel. 328 3556565");
+    expect(phoneNoticeText(true, null)).toBe("Sì, tel.");
+    expect(phoneNoticeText(false, "328 3556565")).toBe("No");
+    expect(phoneNoticeText(null, "328 3556565")).toBe("");
+    expect(phoneNoticeText(true, "+44 20 7946 0000", "en")).toBe("Yes, phone +44 20 7946 0000");
+    expect(phoneNoticeText(false, null, "fr")).toBe("Non");
+    expect(phoneNoticeText(true, "0049 89 123", "de")).toBe("Ja, Tel. 0049 89 123");
   });
 });
 

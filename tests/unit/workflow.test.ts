@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RequestStatus } from "@/db/schema";
 import { can, ROLES } from "@/lib/roles";
 import { nextStatus, STATUS_ORDER, STATUS_OWNER } from "@/lib/status";
+import { sampleFormatMissing } from "@/lib/sample-formats";
 import {
   ADVANCE_LABELS,
   bollaSatisfied,
@@ -19,8 +20,12 @@ function snap(overrides: Partial<WorkflowSnapshot> = {}): WorkflowSnapshot {
     status: "NUOVA",
     contactId: 1,
     contactHasEmail: true,
-    destinationAddress: "Via Roma 1, 24023 Clusone (BG)",
+    recipientName: "ORBIS FURNITURE SRL",
+    destinationAddress: "Via Roma 1\n24023 Clusone (BG)",
+    phoneNotice: true,
+    phoneNoticeNumber: "328 3556565",
     itemsCount: 2,
+    itemsMissingFormat: 0,
     packagesCount: 1,
     weightKg: 2.5,
     piecesCount: 3,
@@ -65,27 +70,102 @@ describe("transitionProblems — passaggi non ammessi", () => {
 
 describe("transitionProblems — Nuova richiesta → In preparazione", () => {
   const to: RequestStatus = "IN_PREPARAZIONE";
+  const RECIPIENT = "Indica il destinatario (ragione sociale o cognome e nome).";
+  const ADDRESS = "Indica l'indirizzo di consegna.";
+  const PHONE_NOTICE = "Indica se serve il preavviso telefonico prima della consegna.";
+  const PHONE_NUMBER = "Indica il numero di telefono per il preavviso.";
 
-  it("con contatto, indirizzo e prodotti è consentito", () => {
+  it("con i dati richiesti da BGP è consentito", () => {
     expect(transitionProblems(snap(), to)).toEqual([]);
   });
 
-  it("segnala contatto, indirizzo e prodotti mancanti", () => {
+  it("segnala contatto, destinatario, indirizzo e prodotti mancanti", () => {
     expect(transitionProblems(snap({ contactId: null }), to)).toEqual(["Seleziona il contatto (cliente o agente)."]);
-    expect(transitionProblems(snap({ destinationAddress: null }), to)).toEqual(["Indica l'indirizzo di destinazione."]);
-    expect(transitionProblems(snap({ destinationAddress: "   " }), to)).toEqual(["Indica l'indirizzo di destinazione."]);
-    expect(transitionProblems(snap({ itemsCount: 0 }), to)).toEqual(["Aggiungi almeno un prodotto richiesto."]);
+    expect(transitionProblems(snap({ recipientName: null }), to)).toEqual([RECIPIENT]);
+    expect(transitionProblems(snap({ recipientName: "  " }), to)).toEqual([RECIPIENT]);
+    expect(transitionProblems(snap({ destinationAddress: null }), to)).toEqual([ADDRESS]);
+    expect(transitionProblems(snap({ destinationAddress: "   " }), to)).toEqual([ADDRESS]);
+    expect(transitionProblems(snap({ itemsCount: 0, itemsMissingFormat: 0 }), to)).toEqual([
+      "Aggiungi almeno un prodotto richiesto.",
+    ]);
   });
 
-  it("elenca tutti i problemi insieme", () => {
-    const problems = transitionProblems(snap({ contactId: null, destinationAddress: "", itemsCount: 0 }), to);
-    expect(problems).toHaveLength(3);
+  it("«alla c.a.» non è obbligatorio (non sempre si sa se il destinatario è una ditta)", () => {
+    // Lo snapshot non lo contiene nemmeno: è solo un promemoria nell'interfaccia.
+    expect(transitionProblems(snap({ recipientName: "LEGNOARTE SRL" }), to)).toEqual([]);
+  });
+
+  it("ogni prodotto deve avere il formato del campione", () => {
+    const one = transitionProblems(snap({ itemsMissingFormat: 1 }), to);
+    expect(one).toHaveLength(1);
+    expect(one[0]).toMatch(/formato del campione/);
+    expect(one[0]).toMatch(/doghe intere, mezze doghe, mazzetta/);
+    expect(transitionProblems(snap({ itemsCount: 3, itemsMissingFormat: 2 }), to)).toEqual([
+      "Indica il formato del campione per 2 prodotti.",
+    ]);
+  });
+
+  it("«Altro» senza descrizione conta come formato mancante (come nel conteggio del servizio)", () => {
+    const items = [
+      { sampleFormat: "MAZZETTA", formatNote: null },
+      { sampleFormat: "ALTRO", formatNote: null },
+      { sampleFormat: "ALTRO", formatNote: "   " },
+      { sampleFormat: "ALTRO", formatNote: "listello tagliato a 30 cm" },
+      { sampleFormat: null, formatNote: null },
+    ];
+    const itemsMissingFormat = items.filter((i) => sampleFormatMissing(i.sampleFormat, i.formatNote)).length;
+    expect(itemsMissingFormat).toBe(3);
+    expect(transitionProblems(snap({ itemsCount: items.length, itemsMissingFormat }), to)).toEqual([
+      "Indica il formato del campione per 3 prodotti.",
+    ]);
+  });
+
+  it("il preavviso telefonico va indicato (sì o no); se sì serve il numero", () => {
+    expect(transitionProblems(snap({ phoneNotice: null, phoneNoticeNumber: null }), to)).toEqual([PHONE_NOTICE]);
+    expect(transitionProblems(snap({ phoneNotice: true, phoneNoticeNumber: null }), to)).toEqual([PHONE_NUMBER]);
+    expect(transitionProblems(snap({ phoneNotice: true, phoneNoticeNumber: "  " }), to)).toEqual([PHONE_NUMBER]);
+    expect(transitionProblems(snap({ phoneNotice: false, phoneNoticeNumber: null }), to)).toEqual([]);
+    // Un numero rimasto da prima non conta se il preavviso non serve.
+    expect(transitionProblems(snap({ phoneNotice: false, phoneNoticeNumber: "035 123456" }), to)).toEqual([]);
+  });
+
+  it("elenca tutti i problemi insieme, nell'ordine del modulo", () => {
+    const problems = transitionProblems(
+      snap({
+        contactId: null,
+        recipientName: null,
+        destinationAddress: "",
+        itemsCount: 1,
+        itemsMissingFormat: 1,
+        phoneNotice: null,
+        phoneNoticeNumber: null,
+      }),
+      to,
+    );
+    expect(problems).toHaveLength(5);
+    expect(problems[0]).toMatch(/contatto/);
+    expect(problems[1]).toBe(RECIPIENT);
+    expect(problems[2]).toBe(ADDRESS);
+    expect(problems[3]).toMatch(/formato del campione/);
+    expect(problems[4]).toBe(PHONE_NOTICE);
+    expect(transitionProblems(snap({ contactId: null, destinationAddress: "", itemsCount: 0 }), to)).toHaveLength(3);
   });
 
   it("i dati di magazzino e logistica non contano in questa fase", () => {
     expect(
       transitionProblems(snap({ packagesCount: null, weightKg: null, piecesCount: 0, carrierId: null, pickupDate: null }), to),
     ).toEqual([]);
+  });
+
+  it("i dati di presa in carico non bloccano gli stati successivi (richieste nate prima della regola)", () => {
+    const legacy = {
+      recipientName: null,
+      phoneNotice: null,
+      phoneNoticeNumber: null,
+      itemsMissingFormat: 2,
+    } satisfies Partial<WorkflowSnapshot>;
+    expect(transitionProblems(snap({ ...legacy, status: "IN_PREPARAZIONE" }), "PRONTA_RITIRO")).toEqual([]);
+    expect(transitionProblems(snap({ ...legacy, status: "PRONTA_RITIRO" }), "SPEDITA")).toEqual([]);
   });
 });
 
