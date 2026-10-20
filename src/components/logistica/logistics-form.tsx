@@ -6,6 +6,7 @@ import { ActionMessage } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/form";
 import type { RequestStatus } from "@/db/schema";
+import type { BollaMode } from "@/lib/config/bolla";
 import { formatNumber, todayIso } from "@/lib/format";
 import { ActionButton } from "./action-button";
 import { useActionForm } from "./use-action-form";
@@ -22,6 +23,9 @@ export type LogisticsFormValues = {
   shippingCost: number | null;
   logisticsNotes: string | null;
 };
+
+/** Voce di costo manuale attiva (Impostazioni → Costi) con l'importo salvato sulla richiesta. */
+export type ManualCostField = { key: string; label: string; amount: number | null };
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -51,9 +55,16 @@ function DateInput({ id, name, defaultValue, invalid }: { id: string; name: stri
   );
 }
 
+/** Importo in euro per un campo del form ("" se non indicato o zero). */
+function amountValue(n: number | null): string {
+  return n === null || n === 0 ? "" : formatNumber(n, 2);
+}
+
 /**
  * Form dei dati di spedizione nel pannello logistica.
- * mode "full": Pronta per il ritiro / Spedita; mode "completed": solo numero DDT, costo e note.
+ * mode "full": Pronta per il ritiro / Spedita; mode "completed": solo data di spedizione, numero DDT,
+ * costi e note. I campi della bolla seguono la modalità configurata (Impostazioni → Bolla di consegna):
+ * numero DDT nascosto con la bolla generata dal sistema, «Bolla pronta» solo con «Entrambe».
  */
 export function LogisticsForm({
   requestId,
@@ -63,6 +74,9 @@ export function LogisticsForm({
   carriers,
   values,
   deliveryFormRequired,
+  bollaMode,
+  courierCost,
+  manualCosts,
   autoConfirmation,
   ddtUploaded,
   trackingHref,
@@ -75,6 +89,11 @@ export function LogisticsForm({
   carriers: CarrierOption[];
   values: LogisticsFormValues;
   deliveryFormRequired: boolean;
+  bollaMode: BollaMode;
+  /** Voce «corriere» dei costi per cliente: il costo di spedizione conta nei costi solo se attiva. */
+  courierCost: { enabled: boolean; label: string };
+  /** Voci di costo manuali attive, inserite dalla logistica su ogni richiesta. */
+  manualCosts: ManualCostField[];
   /** Salvando tracking e data di spedizione parte la conferma automatica (contatto con email, non ancora inviata). */
   autoConfirmation: boolean;
   /** DDT già caricato: viene allegato alla conferma automatica. */
@@ -84,6 +103,10 @@ export function LogisticsForm({
   const uid = useId();
   const id = (name: string) => `${uid}-${name}`;
   const canShip = mode === "full" && status === "PRONTA_RITIRO";
+  // Con la bolla generata dal sistema il numero DDT non si usa; con il DDT del gestionale la casella
+  // «Bolla pronta» non conta (serve numero o file del DDT).
+  const showDdtNumber = bollaMode !== "GENERATA";
+  const showReadyCheckbox = bollaMode === "ENTRAMBE" && deliveryFormRequired;
 
   const { state, pending, intent, onSubmit, fieldErrors } = useActionForm(saveLogisticsData.bind(null, requestId), {
     confirm: (fd) => {
@@ -102,7 +125,16 @@ export function LogisticsForm({
   });
 
   const costField = (
-    <Field label="Costo spedizione (€)" htmlFor={id("cost")} error={fieldErrors.shippingCost} hint="Facoltativo: si può inserire anche dopo la chiusura.">
+    <Field
+      label="Costo spedizione (€)"
+      htmlFor={id("cost")}
+      error={fieldErrors.shippingCost}
+      hint={
+        courierCost.enabled
+          ? `Voce «${courierCost.label}» dei costi della richiesta. Facoltativo: si può inserire anche dopo la chiusura.`
+          : "Facoltativo. Non conteggiato nei costi della richiesta: la voce del corriere è disattivata in Impostazioni → Costi."
+      }
+    >
       <Input
         id={id("cost")}
         name="shippingCost"
@@ -114,10 +146,38 @@ export function LogisticsForm({
       />
     </Field>
   );
-  const ddtField = (
-    <Field label="Numero DDT" htmlFor={id("ddt")} error={fieldErrors.ddtNumber} hint="Numero del documento di trasporto, se emesso dal gestionale.">
+  const manualCostFields = manualCosts.map((c) => {
+    const name = `extraCost.${c.key}`;
+    return (
+      <Field key={c.key} label={`${c.label} (€)`} htmlFor={id(name)} error={fieldErrors[name]}>
+        <Input
+          id={id(name)}
+          name={name}
+          inputMode="decimal"
+          autoComplete="off"
+          placeholder="0,00"
+          defaultValue={amountValue(c.amount)}
+          aria-invalid={fieldErrors[name] ? true : undefined}
+        />
+      </Field>
+    );
+  });
+  // Campo nascosto: il valore salvato resta (il servizio aggiorna sempre il numero DDT).
+  const ddtField = showDdtNumber ? (
+    <Field
+      label="Numero DDT"
+      htmlFor={id("ddt")}
+      error={fieldErrors.ddtNumber}
+      hint={
+        bollaMode === "GESTIONALE"
+          ? "Numero del DDT emesso dal gestionale: con il numero (o il file caricato qui sotto) la bolla è pronta."
+          : "Numero del documento di trasporto, se emesso dal gestionale."
+      }
+    >
       <Input id={id("ddt")} name="ddtNumber" maxLength={50} autoComplete="off" defaultValue={values.ddtNumber ?? ""} />
     </Field>
+  ) : (
+    <input type="hidden" name="ddtNumber" value={values.ddtNumber ?? ""} />
   );
   const notesField = (
     <Field label="Note logistica" htmlFor={id("notes")} error={fieldErrors.logisticsNotes} className="sm:col-span-2">
@@ -148,20 +208,24 @@ export function LogisticsForm({
               </Field>
             </Section>
 
-            <Section title="Bolla di consegna e DDT">
-              {deliveryFormRequired ? (
-                <div className="rounded-lg bg-amber-50/70 p-3 ring-1 ring-inset ring-amber-200 sm:col-span-2">
-                  <input type="hidden" name="deliveryFormReadyField" value="1" />
-                  <Checkbox
-                    name="deliveryFormReady"
-                    defaultChecked={values.deliveryFormReady}
-                    label="Bolla pronta"
-                    hint="La bolla di consegna richiesta è stata preparata (stampata o allegata qui sotto)."
-                  />
-                </div>
-              ) : null}
-              {ddtField}
-            </Section>
+            {showDdtNumber ? (
+              <Section title={bollaMode === "GESTIONALE" ? "DDT del gestionale" : "Bolla di consegna e DDT"}>
+                {showReadyCheckbox ? (
+                  <div className="rounded-lg bg-amber-50/70 p-3 ring-1 ring-inset ring-amber-200 sm:col-span-2">
+                    <input type="hidden" name="deliveryFormReadyField" value="1" />
+                    <Checkbox
+                      name="deliveryFormReady"
+                      defaultChecked={values.deliveryFormReady}
+                      label="Bolla pronta"
+                      hint="La bolla di consegna richiesta è stata preparata (stampata o allegata qui sotto)."
+                    />
+                  </div>
+                ) : null}
+                {ddtField}
+              </Section>
+            ) : (
+              ddtField
+            )}
 
             <Section title="Tracking e spedizione">
               <Field
@@ -185,6 +249,7 @@ export function LogisticsForm({
 
             <Section title="Costi e note">
               {costField}
+              {manualCostFields}
               {notesField}
             </Section>
           </>
@@ -200,6 +265,7 @@ export function LogisticsForm({
             </Field>
             {ddtField}
             {costField}
+            {manualCostFields}
             {notesField}
           </Section>
         )}

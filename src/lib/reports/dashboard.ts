@@ -2,7 +2,10 @@ import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import type { RequestStatus } from "@/db/schema";
+import type { CostConfig } from "@/lib/config/costs";
 import { TIME_ZONE } from "@/lib/format";
+import { costSqlComponents } from "@/lib/requests/costs";
+import { getSetting } from "@/lib/settings";
 import { STATUS_ORDER } from "@/lib/status";
 import { effectiveShipmentDate, receivedBetween, shippedBetween } from "./conditions";
 import { addMonths, monthsBetween, monthStart } from "./period";
@@ -12,17 +15,27 @@ import { addMonths, monthsBetween, monthStart } from "./period";
  * Convenzione: "richieste" = ricevute nel periodo; spedizioni, m² e costi = richieste con data di
  * spedizione effettiva nel periodo (stato Spedita o Completata; senza data di spedizione vale la data
  * di ritiro del corriere), come nel report m² mensile.
+ * Costi: somma delle voci attive in Impostazioni → Costi (src/lib/requests/costs.ts), arrotondate al
+ * centesimo per richiesta come nel dettaglio della richiesta.
  */
 
-export type DashboardKpi = {
+/** Voce di costo attiva, nell'ordine delle colonne. */
+export type CostComponent = { key: string; label: string };
+
+/** Costi di un gruppo di spedizioni: null se nessuna spedizione del gruppo ha un costo. */
+export type CostSummary = {
+  cost: number | null;
+  /** Importo per voce (chiave della voce → euro). */
+  costParts: Record<string, number>;
+  /** Spedizioni con un costo (base del costo medio). */
+  costCount: number;
+  avgCost: number | null;
+};
+
+export type DashboardKpi = CostSummary & {
   received: number;
   shipped: number;
   m2: number;
-  /** Somma dei costi di spedizione inseriti dalla logistica (null se nessun costo). */
-  cost: number | null;
-  /** Spedizioni con un costo inserito (base del costo medio). */
-  costCount: number;
-  avgCost: number | null;
   /** Giorni medi dalla ricezione alla spedizione (data effettiva). */
   avgDays: number | null;
 };
@@ -31,14 +44,12 @@ export type MonthPoint = { month: string; received: number; shipped: number; m2:
 
 export type Ranked<T> = { rows: T[]; total: number };
 
-export type ContactRow = {
+export type ContactRow = CostSummary & {
   contactId: number;
   name: string;
   requests: number;
   shipments: number;
   m2: number;
-  cost: number | null;
-  avgCost: number | null;
 };
 
 export type ProductRow = {
@@ -50,23 +61,68 @@ export type ProductRow = {
   m2: number;
 };
 
-export type CountryRow = { country: string | null; requests: number; shipments: number; m2: number; cost: number | null };
+export type CountryRow = CostSummary & { country: string | null; requests: number; shipments: number; m2: number };
 
-export type AgentRow = { agentId: number | null; name: string | null; requests: number; shipments: number; m2: number; cost: number | null };
+export type AgentRow = { agentId: number | null; name: string | null; requests: number; shipments: number; m2: number };
 
 type Range = { da: string; a: string };
 
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 const numOrNull = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
-/** Righe ricevute o spedite nel periodo, con i flag per distinguere i due insiemi. */
-function baseCte({ da, a }: Range): SQL {
+/** Voci di costo attive, nell'ordine delle colonne dei report. */
+export function dashboardCostComponents(config: CostConfig): CostComponent[] {
+  return costSqlComponents(config).map(({ key, label }) => ({ key, label }));
+}
+
+/**
+ * Voci di costo in SQL: `columns` aggiunge a una select su sample_requests le colonne c0, c1…
+ * (importo della voce per richiesta, al centesimo); `aggregates` le somma su una CTE che le contiene
+ * (insieme a shipping_cost), limitandosi alle righe che soddisfano `filter`; `summary` legge il risultato.
+ */
+async function costSql(configOrCurrent?: CostConfig) {
+  // senza configurazione esplicita valgono le voci salvate in Impostazioni → Costi
+  const config = configOrCurrent ?? (await getSetting("costConfig"));
+  const components = costSqlComponents(config);
+  const col = (i: number) => sql.raw(`c${i}`);
+  const columns = sql.join(
+    components.map((c, i) => sql`, round((${c.expr})::numeric, 2) as ${col(i)}`),
+    sql``,
+  );
+  const aggregates = (alias: string, filter: SQL): SQL => {
+    const t = sql.raw(alias);
+    const total = components.length ? sql`(${sql.join(components.map((_, i) => sql`${t}.${col(i)}`), sql` + `)})` : sql`0`;
+    // con il corriere attivo conta come «con costo» anche una spedizione con costo corriere inserito pari a 0
+    const hasCost = config.courier.enabled ? sql`(${total} > 0 or ${t}.shipping_cost is not null)` : sql`(${total} > 0)`;
+    const parts = components.map((_, i) => sql`, (sum(${t}.${col(i)}) filter (where ${filter}))::float8 as ${sql.raw(`p${i}`)}`);
+    const n = sql`count(*) filter (where ${filter} and ${hasCost})`;
+    // cost_total è null se nessuna spedizione ha un costo (per ordinare con «nulls last»)
+    return sql`(case when ${n} > 0 then sum(${total}) filter (where ${filter}) end)::float8 as cost_total,
+      (${n})::int as cost_n
+      ${sql.join(parts, sql``)}`;
+  };
+  const summary = (row: Record<string, unknown> | undefined): CostSummary => {
+    const n = num(row?.cost_n);
+    const total = num(row?.cost_total);
+    return {
+      cost: n > 0 ? total : null,
+      costParts: Object.fromEntries(components.map((c, i) => [c.key, num(row?.[`p${i}`])])),
+      costCount: n,
+      avgCost: n > 0 ? total / n : null,
+    };
+  };
+  return { columns, aggregates, summary };
+}
+
+/** Righe ricevute o spedite nel periodo, con i flag per distinguere i due insiemi e le voci di costo. */
+function baseCte({ da, a }: Range, costColumns: SQL): SQL {
   const rec = receivedBetween(da, a);
   const shp = shippedBetween(da, a);
   return sql`
     base as (
       select sample_requests.id, sample_requests.contact_id, sample_requests.shipping_cost,
              ${rec} as rec, ${shp} as shp
+             ${costColumns}
       from sample_requests
       where ${rec} or ${shp}
     ),
@@ -81,35 +137,31 @@ function limitClause(limit: number | null): SQL {
   return limit ? sql`limit ${limit}` : sql``;
 }
 
-export async function getDashboardKpi(range: Range): Promise<DashboardKpi> {
+export async function getDashboardKpi(range: Range, costConfig?: CostConfig): Promise<DashboardKpi> {
+  const costs = await costSql(costConfig);
   const [rec] = await db.execute<{ n: number }>(
     sql`select count(*)::int as n from sample_requests where ${receivedBetween(range.da, range.a)}`,
   );
-  const [shp] = await db.execute<{
-    n: number;
-    cost: number | null;
-    n_cost: number;
-    avg_cost: number | null;
-    avg_days: number | null;
-    m2: number | null;
-  }>(sql`
+  const [shp] = await db.execute<Record<string, unknown>>(sql`
+    with shp as (
+      select sample_requests.id, sample_requests.shipping_cost,
+             ${effectiveShipmentDate} - (sample_requests.received_at at time zone ${TIME_ZONE})::date as days
+             ${costs.columns}
+      from sample_requests
+      where ${shippedBetween(range.da, range.a)}
+    )
     select count(*)::int as n,
-           sum(shipping_cost)::float8 as cost,
-           count(shipping_cost)::int as n_cost,
-           avg(shipping_cost)::float8 as avg_cost,
-           avg(${effectiveShipmentDate} - (received_at at time zone ${TIME_ZONE})::date)::float8 as avg_days,
+           avg(shp.days)::float8 as avg_days,
            (select coalesce(sum(pieces.area_m2), 0)::float8 from pieces
-             where pieces.request_id in (select id from sample_requests where ${shippedBetween(range.da, range.a)})) as m2
-    from sample_requests
-    where ${shippedBetween(range.da, range.a)}`);
+             where pieces.request_id in (select id from shp)) as m2,
+           ${costs.aggregates("shp", sql`true`)}
+    from shp`);
   return {
     received: num(rec?.n),
     shipped: num(shp?.n),
     m2: num(shp?.m2),
-    cost: numOrNull(shp?.cost),
-    costCount: num(shp?.n_cost),
-    avgCost: numOrNull(shp?.avg_cost),
     avgDays: numOrNull(shp?.avg_days),
+    ...costs.summary(shp),
   };
 }
 
@@ -161,30 +213,23 @@ export async function getMonthlySeries(range: Range): Promise<MonthPoint[]> {
 }
 
 /** Costi e volumi per cliente (il "costo per cliente" richiesto da BGP). */
-export async function getByContact(range: Range, limit: number | null): Promise<Ranked<ContactRow>> {
-  const rows = await db.execute<{
-    contact_id: number;
-    name: string;
-    requests: number;
-    shipments: number;
-    m2: number;
-    cost: number | null;
-    avg_cost: number | null;
-    total: number;
-  }>(sql`
-    with ${baseCte(range)}
+export async function getByContact(range: Range, limit: number | null, costConfig?: CostConfig): Promise<Ranked<ContactRow>> {
+  const costs = await costSql(costConfig);
+  const rows = await db.execute<
+    Record<string, unknown> & { contact_id: number; name: string; requests: number; shipments: number; m2: number; total: number }
+  >(sql`
+    with ${baseCte(range, costs.columns)}
     select contacts.id as contact_id, contacts.name,
            count(*) filter (where base.rec)::int as requests,
            count(*) filter (where base.shp)::int as shipments,
            coalesce(sum(m2.m2), 0)::float8 as m2,
-           (sum(base.shipping_cost) filter (where base.shp))::float8 as cost,
-           (avg(base.shipping_cost) filter (where base.shp))::float8 as avg_cost,
+           ${costs.aggregates("base", sql`base.shp`)},
            (count(*) over ())::int as total
     from base
     join contacts on contacts.id = base.contact_id
     left join m2 on m2.request_id = base.id
     group by contacts.id, contacts.name
-    order by cost desc nulls last, m2 desc, requests desc, contacts.name
+    order by cost_total desc nulls last, m2 desc, requests desc, contacts.name
     ${limitClause(limit)}`);
   return {
     total: num(rows[0]?.total),
@@ -194,8 +239,7 @@ export async function getByContact(range: Range, limit: number | null): Promise<
       requests: num(r.requests),
       shipments: num(r.shipments),
       m2: num(r.m2),
-      cost: numOrNull(r.cost),
-      avgCost: numOrNull(r.avg_cost),
+      ...costs.summary(r),
     })),
   };
 }
@@ -247,21 +291,17 @@ export async function getByProduct(range: Range, limit: number | null): Promise<
   };
 }
 
-export async function getByCountry(range: Range, limit: number | null): Promise<Ranked<CountryRow>> {
-  const rows = await db.execute<{
-    country: string | null;
-    requests: number;
-    shipments: number;
-    m2: number;
-    cost: number | null;
-    total: number;
-  }>(sql`
-    with ${baseCte(range)}
+export async function getByCountry(range: Range, limit: number | null, costConfig?: CostConfig): Promise<Ranked<CountryRow>> {
+  const costs = await costSql(costConfig);
+  const rows = await db.execute<
+    Record<string, unknown> & { country: string | null; requests: number; shipments: number; m2: number; total: number }
+  >(sql`
+    with ${baseCte(range, costs.columns)}
     select nullif(trim(contacts.country), '') as country,
            count(*) filter (where base.rec)::int as requests,
            count(*) filter (where base.shp)::int as shipments,
            coalesce(sum(m2.m2), 0)::float8 as m2,
-           (sum(base.shipping_cost) filter (where base.shp))::float8 as cost,
+           ${costs.aggregates("base", sql`base.shp`)},
            (count(*) over ())::int as total
     from base
     join contacts on contacts.id = base.contact_id
@@ -276,7 +316,7 @@ export async function getByCountry(range: Range, limit: number | null): Promise<
       requests: num(r.requests),
       shipments: num(r.shipments),
       m2: num(r.m2),
-      cost: numOrNull(r.cost),
+      ...costs.summary(r),
     })),
   };
 }
@@ -289,15 +329,13 @@ export async function getByAgent(range: Range, limit: number | null): Promise<Ra
     requests: number;
     shipments: number;
     m2: number;
-    cost: number | null;
     total: number;
   }>(sql`
-    with ${baseCte(range)}
+    with ${baseCte(range, sql``)}
     select agent.id as agent_id, agent.name,
            count(*) filter (where base.rec)::int as requests,
            count(*) filter (where base.shp)::int as shipments,
            coalesce(sum(m2.m2), 0)::float8 as m2,
-           (sum(base.shipping_cost) filter (where base.shp))::float8 as cost,
            (count(*) over ())::int as total
     from base
     join contacts on contacts.id = base.contact_id
@@ -315,7 +353,6 @@ export async function getByAgent(range: Range, limit: number | null): Promise<Ra
       requests: num(r.requests),
       shipments: num(r.shipments),
       m2: num(r.m2),
-      cost: numOrNull(r.cost),
     })),
   };
 }

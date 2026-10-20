@@ -1,7 +1,5 @@
 "use server";
 
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { and, count, eq, ne, sql } from "drizzle-orm";
@@ -16,15 +14,21 @@ import {
   sampleRequests,
   users,
 } from "@/db/schema";
+import { unknownBollaPlaceholders } from "@/components/impostazioni/config-utils";
 import { fail, NOT_AUTHORIZED, zodFieldErrors, type ActionResult } from "@/lib/action-result";
 import { hashPassword, passwordProblem } from "@/lib/auth/password";
 import { destroyUserSessions, getAuthorizedUser } from "@/lib/auth/session";
-import { sendMail, type OutgoingAttachment } from "@/lib/email/mailer";
+import { bollaConfigSchema, type BollaConfig } from "@/lib/config/bolla";
+import { activeCostComponents, costConfigSchema, manualCostKey, type CostConfig } from "@/lib/config/costs";
+import { crmExportConfigSchema, type CrmExportConfig } from "@/lib/config/crm-export";
+import { previousMonthIso, sendCrmExport } from "@/lib/crm-export/run";
+import { sendMail } from "@/lib/email/mailer";
 import { previewNotification, SIGNATURE_CID, signatureImageAttachment } from "@/lib/email/notifications";
 import { invalidEmails, isValidEmail, parseEmailList } from "@/lib/email/recipients";
 import { TEMPLATE_LANGUAGES, textToHtml, type TemplateContent } from "@/lib/email/templates";
-import { formatDateTime } from "@/lib/format";
-import { getSettings, updateSettings } from "@/lib/settings";
+import { formatDateTime, formatMonth } from "@/lib/format";
+import { SAMPLE_FORMATS } from "@/lib/sample-formats";
+import { getSetting, getSettings, updateSettings } from "@/lib/settings";
 import { dbId, parseDbId } from "@/lib/validation";
 
 type State = ActionResult | null;
@@ -543,4 +547,197 @@ export async function savePublicFormSettingsAction(_prev: State, fd: FormData): 
       ? "Impostazioni del modulo pubblico salvate: il modulo è attivo."
       : "Impostazioni salvate. Attenzione: il modulo pubblico è disattivato e non accetta richieste.",
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Costi per cliente                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Salva le voci dei «costi per cliente». Le voci manuali nuove arrivano con chiave vuota: la chiave
+ * stabile si ricava dal nome (manualCostKey); quelle esistenti la mantengono anche se rinominate.
+ */
+export async function saveCostConfigAction(input: CostConfig): Promise<ActionResult<CostConfig>> {
+  const actor = await getAuthorizedUser("settings.manage");
+  if (!actor) return NOT_AUTHORIZED;
+  const raw = (input && typeof input === "object" ? input : {}) as Partial<CostConfig>;
+  const manualIn = Array.isArray(raw.manual) ? raw.manual : [];
+  const keys = manualIn.map((m) => (typeof m?.key === "string" ? m.key : "")).filter(Boolean);
+  const manual = manualIn.map((m) => {
+    if (typeof m?.key === "string" && m.key) return m;
+    const key = manualCostKey(typeof m?.label === "string" ? m.label : "", keys);
+    keys.push(key);
+    return { ...m, key };
+  });
+
+  const parsed = costConfigSchema.safeParse({ ...raw, manual });
+  if (!parsed.success) return fail(CHECK_FIELDS, zodFieldErrors(parsed.error.issues));
+  const config = parsed.data;
+
+  const seen = new Map<string, number>();
+  for (const [i, item] of config.manual.entries()) {
+    const name = item.label.toLowerCase();
+    if (seen.has(name)) {
+      return fail(CHECK_FIELDS, { [`manual.${i}.label`]: "C'è già una voce con questo nome" });
+    }
+    seen.set(name, i);
+  }
+
+  await updateSettings({ costConfig: config });
+  revalidatePath("/", "layout");
+  const active = activeCostComponents(config).length;
+  return {
+    ok: true,
+    data: config,
+    message: active
+      ? "Voci di costo salvate: cruscotto e report usano da subito le nuove impostazioni."
+      : "Voci di costo salvate. Attenzione: nessuna voce è attiva, i costi per cliente risulteranno sempre 0.",
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Bolla di consegna: modalità, numerazione, regole                    */
+/* ------------------------------------------------------------------ */
+
+export async function saveBollaConfigAction(input: BollaConfig): Promise<ActionResult<BollaConfig>> {
+  const actor = await getAuthorizedUser("settings.manage");
+  if (!actor) return NOT_AUTHORIZED;
+  const raw = (input && typeof input === "object" ? input : {}) as Partial<BollaConfig>;
+  // messaggi in italiano per i limiti numerici (lo schema usa quelli predefiniti di zod)
+  const errors: Record<string, string> = {};
+  const padding = Number(raw.numberPadding);
+  if (!Number.isInteger(padding) || padding < 1 || padding > 8) errors.numberPadding = "Scegli da 1 a 8 cifre";
+  const minPackages = raw.rules?.minPackages;
+  if (minPackages !== null && minPackages !== undefined) {
+    const n = Number(minPackages);
+    if (!Number.isInteger(n) || n < 1 || n > 999) {
+      errors["rules.minPackages"] = "Scrivi un numero intero da 1 a 999, oppure lascia vuoto";
+    }
+  }
+  const parsed = bollaConfigSchema.safeParse(raw);
+  if (!parsed.success || Object.keys(errors).length) {
+    return fail(CHECK_FIELDS, { ...(parsed.success ? {} : zodFieldErrors(parsed.error.issues)), ...errors });
+  }
+  const config = parsed.data;
+
+  const unknown = unknownBollaPlaceholders(config.numberFormat);
+  if (unknown.length) {
+    return fail(CHECK_FIELDS, {
+      numberFormat: `Segnaposto non riconosciuto: ${unknown.join(", ")}. Usa solo {numero} e {anno}.`,
+    });
+  }
+  if (/[\r\n\t]/.test(config.numberFormat)) {
+    return fail(CHECK_FIELDS, { numberFormat: "Il formato deve stare su una riga" });
+  }
+  // formati senza doppioni, nell'ordine dell'elenco
+  config.rules.formats = SAMPLE_FORMATS.filter((f) => config.rules.formats.includes(f));
+
+  await updateSettings({ bollaConfig: config });
+  revalidatePath("/", "layout");
+  return {
+    ok: true,
+    data: config,
+    message:
+      "Impostazioni della bolla salvate. Le regole valgono per le richieste nuove o modificate da ora in poi e quando il magazzino segna una richiesta pronta.",
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Export m² per il CRM                                                */
+/* ------------------------------------------------------------------ */
+
+export async function saveCrmExportConfigAction(input: CrmExportConfig): Promise<ActionResult<CrmExportConfig>> {
+  const actor = await getAuthorizedUser("settings.manage");
+  if (!actor) return NOT_AUTHORIZED;
+  const raw = (input && typeof input === "object" ? input : {}) as Partial<CrmExportConfig>;
+  const errors: Record<string, string> = {};
+
+  // destinatari: stessi controlli delle altre liste di indirizzi
+  const tokens = (Array.isArray(raw.autoSend?.recipients) ? raw.autoSend.recipients : [])
+    .map((r) => (typeof r === "string" ? r.trim() : ""))
+    .filter(Boolean);
+  const invalid = tokens.filter((t) => !isValidEmail(t));
+  if (invalid.length) {
+    errors["autoSend.recipients"] = `Indirizzi non validi: ${invalid.slice(0, 5).join(", ")}${invalid.length > 5 ? "…" : ""}`;
+  }
+  const recipients = parseEmailList(tokens);
+  if (recipients.length > 10) errors["autoSend.recipients"] ??= "Massimo 10 destinatari";
+  const day = Number(raw.autoSend?.day);
+  if (!Number.isInteger(day) || day < 1 || day > 28) errors["autoSend.day"] = "Scegli un giorno tra 1 e 28";
+  if (typeof raw.fileName === "string" && raw.fileName.trim().length > 80) errors.fileName = "Massimo 80 caratteri";
+  const columns = Array.isArray(raw.columns) ? [...new Set(raw.columns)] : raw.columns;
+  const webhook = {
+    enabled: raw.webhook?.enabled,
+    url: typeof raw.webhook?.url === "string" ? raw.webhook.url.trim() : raw.webhook?.url,
+    secret: typeof raw.webhook?.secret === "string" ? raw.webhook.secret.trim() : raw.webhook?.secret,
+  };
+
+  const parsed = crmExportConfigSchema.safeParse({
+    ...raw,
+    columns,
+    autoSend: { ...raw.autoSend, recipients },
+    webhook,
+  });
+  if (typeof webhook.url === "string" && webhook.url && !/^https:\/\/\S+$/.test(webhook.url)) {
+    errors["webhook.url"] = "Indica un indirizzo https://";
+  }
+  if (webhook.enabled === true && (typeof webhook.secret !== "string" || webhook.secret.length < 16)) {
+    errors["webhook.secret"] = "Genera un segreto: serve al CRM per verificare che i dati arrivino da BGP";
+  }
+  if (!parsed.success) Object.assign(errors, { ...zodFieldErrors(parsed.error.issues), ...errors });
+  // errori sui singoli elementi delle liste (es. "columns.2") → sul campo della lista
+  for (const key of Object.keys(errors)) {
+    const list = /^(autoSend\.recipients|columns)\.\d+$/.exec(key)?.[1];
+    if (list) {
+      errors[list] ??= errors[key];
+      delete errors[key];
+    }
+  }
+  if (!parsed.success || Object.keys(errors).length) return fail(CHECK_FIELDS, errors);
+
+  const config = parsed.data;
+  await updateSettings({ crmExport: config });
+  revalidatePath("/", "layout");
+  const auto = config.autoSend.enabled || config.webhook.enabled;
+  return {
+    ok: true,
+    data: config,
+    message: auto
+      ? `Impostazioni dell'export salvate. Invio automatico attivo: il giorno ${config.autoSend.day} di ogni mese parte l'export del mese precedente.`
+      : "Impostazioni dell'export salvate.",
+  };
+}
+
+/** «Invia ora il mese precedente»: email con il file ai destinatari salvati (il webhook resta al solo invio automatico). */
+export async function sendCrmExportNowAction(): Promise<ActionResult> {
+  const actor = await getAuthorizedUser("settings.manage");
+  if (!actor) return NOT_AUTHORIZED;
+  const config = await getSetting("crmExport");
+  const recipients = config.autoSend.recipients;
+  if (recipients.length === 0) {
+    return fail("Nessun destinatario salvato: aggiungi almeno un indirizzo in «Invio automatico», salva e riprova.");
+  }
+  const month = previousMonthIso();
+  const result = await sendCrmExport(month, { triggeredById: actor.id, recipients });
+  revalidatePath("/", "layout");
+
+  const label = formatMonth(month);
+  const empty =
+    result.rows === 0 ? " Attenzione: nel mese non risultano campioni spediti, il file contiene solo l'intestazione." : "";
+  switch (result.email.status) {
+    case "ERRORE":
+      return fail(`Invio non riuscito: ${result.email.detail ?? "errore del server di posta"}.`);
+    case "SIMULATA":
+      return {
+        ok: true,
+        message: `Modalità prova attiva (EMAIL_DRY_RUN): l'export di ${label} è stato registrato nel registro email ma non inviato.${empty}`,
+      };
+    case "INVIATA":
+      return {
+        ok: true,
+        message: `Export di ${label} inviato a ${recipients.join(", ")} (${result.rows} righe).${empty}`,
+      };
+    default:
+      return fail("Nessuna email inviata: controlla i destinatari salvati.");
+  }
 }

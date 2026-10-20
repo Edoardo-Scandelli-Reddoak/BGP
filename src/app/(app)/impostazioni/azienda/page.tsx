@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { CompanySettingsForm } from "@/components/impostazioni/general-settings-forms";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth/session";
@@ -13,7 +14,16 @@ export default async function CompanySettingsPage() {
     <Card>
       <CardHeader
         title="Bolla di consegna e dati aziendali"
-        description="Compaiono nell'intestazione della bolla di consegna generata dal sistema. Causale, porto e aspetto sono i valori proposti per ogni nuova bolla."
+        description={
+          <>
+            Compaiono nell&apos;intestazione della bolla di consegna generata dal sistema. Causale, porto e aspetto sono i
+            valori proposti per ogni nuova bolla. Chi prepara la bolla, numerazione e regole:{" "}
+            <Link href="/impostazioni/bolla" className="font-medium text-brand-700 hover:underline">
+              Bolla di consegna
+            </Link>
+            .
+          </>
+        }
       />
       <CardBody>
         <CompanySettingsForm

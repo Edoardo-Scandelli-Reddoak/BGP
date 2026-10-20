@@ -21,11 +21,13 @@ import {
   SOURCE_LABELS,
   toQueryString,
 } from "@/lib/reports/history-filters";
+import { sampleFormatText } from "@/lib/sample-formats";
 import { STATUS_LABELS, STATUS_ORDER } from "@/lib/status";
 
 export const metadata: Metadata = { title: "Storico completo" };
 
-const MAX_CODES = 3;
+/** Prodotti mostrati per riga (gli altri sono nel CSV e nel dettaglio della richiesta). */
+const MAX_ITEMS = 3;
 const DASH = <span className="text-slate-400">—</span>;
 
 export default async function HistoryPage(props: PageProps<"/direzione/storico">) {
@@ -231,13 +233,12 @@ export default async function HistoryPage(props: PageProps<"/direzione/storico">
                     <TH>Corriere</TH>
                     <TH>Tracking</TH>
                     <TH>Spedita il</TH>
-                    <TH className="text-right">Costo</TH>
+                    <TH className="text-right">Costo spedizione</TH>
                   </tr>
                 </THead>
                 <TBody>
                   {rows.map((r) => {
-                    // stesso prodotto in due formati: il codice compare una volta, il dettaglio nel tooltip
-                    const codes = [...new Set(r.productItems.map((i) => i.code))];
+                    const hiddenItems = r.productItems.length - MAX_ITEMS;
                     const trackHref = trackingUrl(r.carrierTrackingUrl, r.trackingNumber);
                     return (
                       <TR key={r.id}>
@@ -262,13 +263,28 @@ export default async function HistoryPage(props: PageProps<"/direzione/storico">
                         </TD>
                         <TD className="min-w-40 text-slate-600">{r.agentName ?? <span className="text-slate-400">Direzionale</span>}</TD>
                         <TD className="whitespace-nowrap">{r.country || DASH}</TD>
-                        <TD className="min-w-32 font-mono text-xs" title={historyProductsText(r.productItems) || undefined}>
-                          {codes.length === 0
-                            ? DASH
-                            : codes.slice(0, MAX_CODES).join(", ")}
-                          {codes.length > MAX_CODES ? (
-                            <span className="ml-1 font-sans text-slate-500">+{codes.length - MAX_CODES}</span>
-                          ) : null}
+                        <TD className="min-w-48 max-w-xs text-xs">
+                          {r.productItems.length === 0 ? (
+                            DASH
+                          ) : (
+                            // un prodotto per riga: codice e formato del campione (lo stesso codice può avere due formati)
+                            <ul className="space-y-0.5">
+                              {r.productItems.slice(0, MAX_ITEMS).map((item, i) => {
+                                const format = sampleFormatText(item.format, item.note);
+                                return (
+                                  <li key={i}>
+                                    <span className="whitespace-nowrap font-mono font-medium text-slate-900">{item.code}</span>
+                                    {format ? <span className="text-slate-500"> · {format}</span> : null}
+                                  </li>
+                                );
+                              })}
+                              {hiddenItems > 0 ? (
+                                <li className="text-slate-500" title={historyProductsText(r.productItems)}>
+                                  +{hiddenItems} altr{hiddenItems === 1 ? "o" : "i"}
+                                </li>
+                              ) : null}
+                            </ul>
+                          )}
                         </TD>
                         <TD className="text-right tabular-nums">{r.packagesCount ?? DASH}</TD>
                         <TD className="whitespace-nowrap text-right tabular-nums">{r.weightKg === null ? DASH : formatKg(r.weightKg)}</TD>

@@ -1,5 +1,6 @@
 import "server-only";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type RGB } from "pdf-lib";
+import { isAbroad } from "@/lib/config/bolla";
 import { formatDate, formatDateTime, formatNumber, requestCode, todayIso } from "@/lib/format";
 import type { RequestDetail } from "@/lib/requests/queries";
 import { sampleFormatText } from "@/lib/sample-formats";
@@ -63,16 +64,27 @@ function addressKey(value: string): string {
 }
 
 /**
- * Paese da stampare nel luogo di destinazione: quello del contatto, ma solo se la consegna è al
- * suo indirizzo in anagrafica e il paese non è già scritto (per gli altri indirizzi il back office
- * lo indica nell'indirizzo stesso: meglio nessun paese che uno sbagliato).
+ * Paese da stampare nel luogo di destinazione, se non è già scritto nell'indirizzo: il paese di
+ * consegna della richiesta se è estero; altrimenti quello del contatto, ma solo se la consegna è al
+ * suo indirizzo in anagrafica (sulle richieste precedenti il paese di consegna è stato copiato dal
+ * contatto: meglio nessun paese che uno sbagliato).
  */
 function destinationCountry(detail: RequestDetail): string | null {
-  const country = detail.contact.country?.trim();
   const address = detail.destinationAddress.trim();
-  if (!country || !address || addressKey(address).includes(addressKey(country))) return null;
+  if (!address) return null;
+  const notInAddress = (c: string | null | undefined) =>
+    c?.trim() && !addressKey(address).includes(addressKey(c)) ? c.trim().toUpperCase() : null;
+  if (isAbroad(detail.destinationCountry)) return notInAddress(detail.destinationCountry);
   const home = detail.contact.defaultAddress?.trim();
-  return home && addressKey(home) === addressKey(address) ? country.toUpperCase() : null;
+  return home && addressKey(home) === addressKey(address) ? notInAddress(detail.contact.country) : null;
+}
+
+/**
+ * Numero stampato sulla bolla: quello assegnato con «Genera bolla», altrimenti il numero del DDT
+ * del gestionale, altrimenti il codice della richiesta. Il PDF non assegna mai un numero da sé.
+ */
+export function bollaDocNumber(detail: Pick<RequestDetail, "id" | "bollaNumber" | "ddtNumber">): string {
+  return detail.bollaNumber?.trim() || detail.ddtNumber?.trim() || requestCode(detail.id);
 }
 
 type TextOpts = { size?: number; font?: PDFFont; color?: RGB };
@@ -466,8 +478,8 @@ export async function generateBollaPdf(detail: RequestDetail, settings: AppSetti
   };
   const clean = makeSanitizer(fonts.regular);
   const code = requestCode(detail.id);
-  const docNumber = detail.ddtNumber?.trim() || code;
-  const docDate = formatDate(detail.shipmentDate || detail.pickupDate || todayIso());
+  const docNumber = bollaDocNumber(detail);
+  const docDate = formatDate(detail.shipmentDate || detail.pickupDate || detail.bollaGeneratedAt || todayIso());
 
   pdf.setTitle(`Bolla di consegna ${docNumber} - ${code}`);
   pdf.setAuthor(settings.companyName);

@@ -1,32 +1,45 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { BollaRefs, BollaStatusBadge } from "@/components/logistica/bolla-info";
 import { ItemFormat, PhoneNoticeBadge, RecipientSummary, recipientOf } from "@/components/logistica/delivery-info";
 import { oneLine } from "@/components/logistica/utils";
 import { requireUser } from "@/lib/auth/session";
+import { isAbroad, type BollaMode } from "@/lib/config/bolla";
 import { formatDate, formatNumber, requestCode } from "@/lib/format";
+import { getSetting } from "@/lib/settings";
 import { listReadyForPickup, type ItemSummaryRow, type ReadyForPickupRow } from "./_lib/queries";
 
 export const metadata: Metadata = { title: "Pronte per il ritiro" };
 
-function BollaBadge({ row }: { row: ReadyForPickupRow }) {
-  if (!row.deliveryFormRequired) return null;
-  return <Badge tone={row.bollaReady ? "green" : "amber"}>{row.bollaReady ? "Bolla pronta" : "Bolla da preparare"}</Badge>;
-}
-
-function BollaCell({ row }: { row: ReadyForPickupRow }) {
-  if (!row.deliveryFormRequired) return <span className="text-xs text-slate-400">Non richiesta</span>;
+function BollaCell({ row, mode }: { row: ReadyForPickupRow; mode: BollaMode }) {
+  if (!row.deliveryFormRequired) {
+    return (
+      <div className="flex flex-col items-start gap-1">
+        <span className="text-xs text-slate-400">Non richiesta</span>
+        <BollaRefs bollaNumber={row.bollaNumber} ddtNumber={row.ddtNumber} mode={mode} />
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col items-start gap-1">
-      <BollaBadge row={row} />
-      {row.ddtNumber ? <span className="text-xs text-slate-500">DDT {row.ddtNumber}</span> : null}
+      <BollaStatusBadge required ready={row.bollaReady} />
+      <BollaRefs bollaNumber={row.bollaNumber} ddtNumber={row.ddtNumber} mode={mode} />
+      {row.deliveryFormAutoReason ? (
+        <span className="text-xs text-amber-800">Automatica: {row.deliveryFormAutoReason}</span>
+      ) : null}
     </div>
   );
+}
+
+/** Paese di consegna se estero (della richiesta; per le richieste senza, del contatto). */
+function abroadCountry(row: ReadyForPickupRow): string | null {
+  const country = row.destinationCountry?.trim() || row.contactCountry?.trim() || null;
+  return isAbroad(country) ? country : null;
 }
 
 const ITEMS_SHOWN = 3;
@@ -60,7 +73,8 @@ function pickupLabel(row: ReadyForPickupRow): string {
 
 export default async function ReadyForPickupPage() {
   await requireUser("logistics.work");
-  const rows = await listReadyForPickup();
+  const { mode } = await getSetting("bollaConfig");
+  const rows = await listReadyForPickup(mode);
   const bolleTodo = rows.filter((r) => !r.bollaReady).length;
 
   return (
@@ -116,16 +130,16 @@ export default async function ReadyForPickupPage() {
                       </TD>
                       <TD className="max-w-sm">
                         <RecipientSummary r={r} contactName={r.contactName} />
-                        {r.contactCountry && r.contactCountry.toLowerCase() !== "italia" ? (
-                          <p className="text-xs text-slate-500">Paese del contatto: {r.contactCountry}</p>
+                        {abroadCountry(r) ? (
+                          <p className="text-xs font-medium text-slate-700">Estero: {abroadCountry(r)}</p>
                         ) : null}
                         <PhoneNoticeBadge phoneNotice={r.phoneNotice} number={r.phoneNoticeNumber} className="mt-1.5" />
                         <ItemsSummary items={r.items} />
                       </TD>
                       <TD className="text-right tabular-nums">{r.packagesCount ?? "—"}</TD>
                       <TD className="text-right whitespace-nowrap tabular-nums">{weightLabel(r)}</TD>
-                      <TD>
-                        <BollaCell row={r} />
+                      <TD className="max-w-48">
+                        <BollaCell row={r} mode={mode} />
                       </TD>
                       <TD>
                         {r.carrierName || r.pickupDate ? (
@@ -155,7 +169,7 @@ export default async function ReadyForPickupPage() {
                           <p className="truncate text-xs text-slate-700">Alla c.a. {r.attentionOf.trim()}</p>
                         ) : null}
                       </div>
-                      <BollaBadge row={r} />
+                      {r.deliveryFormRequired ? <BollaStatusBadge required ready={r.bollaReady} className="shrink-0" /> : null}
                     </div>
                     {r.destinationAddress ? (
                       <p className="mt-1 line-clamp-2 text-xs text-slate-500">{oneLine(r.destinationAddress)}</p>
@@ -177,9 +191,8 @@ export default async function ReadyForPickupPage() {
                         <span className="text-slate-400">Corriere e ritiro da definire</span>
                       )}
                     </p>
-                    {r.deliveryFormRequired && r.ddtNumber ? (
-                      <p className="mt-1 text-xs text-slate-500">DDT {r.ddtNumber}</p>
-                    ) : null}
+                    {abroadCountry(r) ? <p className="mt-1 text-xs font-medium text-slate-700">Estero: {abroadCountry(r)}</p> : null}
+                    <BollaRefs bollaNumber={r.bollaNumber} ddtNumber={r.ddtNumber} mode={mode} className="mt-1" />
                   </Link>
                 </li>
               ))}

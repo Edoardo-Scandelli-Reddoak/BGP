@@ -279,6 +279,7 @@ export async function listProducts(f: ProductFilters, page: number) {
         description: products.description,
         brand: products.brand,
         category: products.category,
+        pricePerM2: products.pricePerM2,
         active: products.active,
         times: usage.times,
         m2: shipped.m2,

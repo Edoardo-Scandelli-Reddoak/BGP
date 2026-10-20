@@ -13,6 +13,7 @@ import {
   statusEvents,
   type RequestStatus,
 } from "@/db/schema";
+import type { BollaMode } from "@/lib/config/bolla";
 import { bollaSatisfied } from "@/lib/requests/workflow";
 
 /** Esiste un DDT caricato per la richiesta (sottoquery correlata, senza leggere il file). */
@@ -27,8 +28,8 @@ function enteredStatusAt(status: RequestStatus) {
 
 const LIST_LIMIT = 200;
 
-/** Vista «Pronte per il ritiro»: dalla più vecchia. */
-export async function listReadyForPickup() {
+/** Vista «Pronte per il ritiro»: dalla più vecchia. `mode` = modalità della bolla (Impostazioni). */
+export async function listReadyForPickup(mode: BollaMode) {
   const rows = await db
     .select({
       id: sampleRequests.id,
@@ -42,8 +43,11 @@ export async function listReadyForPickup() {
       weightKg: sampleRequests.weightKg,
       deliveryFormRequired: sampleRequests.deliveryFormRequired,
       deliveryFormReady: sampleRequests.deliveryFormReady,
+      deliveryFormAutoReason: sampleRequests.deliveryFormAutoReason,
       ddtNumber: sampleRequests.ddtNumber,
+      bollaNumber: sampleRequests.bollaNumber,
       pickupDate: sampleRequests.pickupDate,
+      destinationCountry: sampleRequests.destinationCountry,
       contactName: contacts.name,
       contactCountry: contacts.country,
       carrierName: carriers.name,
@@ -57,11 +61,11 @@ export async function listReadyForPickup() {
     .orderBy(asc(sampleRequests.receivedAt), asc(sampleRequests.id))
     .limit(LIST_LIMIT);
   const items = await listItemsSummary(rows.map((r) => r.id));
-  // Stessa regola del flusso: bolla pronta se spuntata, con numero DDT o con il DDT caricato.
+  // Stessa regola del flusso, secondo la modalità: bolla generata, DDT del gestionale (numero o file), «bolla pronta».
   return rows.map((r) => ({
     ...r,
     items: items.get(r.id) ?? [],
-    bollaReady: bollaSatisfied({ ...r, hasDdtAttachment: r.hasDdt }),
+    bollaReady: bollaSatisfied({ ...r, hasDdtAttachment: r.hasDdt, bollaMode: mode }),
   }));
 }
 
@@ -95,8 +99,11 @@ export type ItemSummaryRow = ReadyForPickupRow["items"][number];
 
 export type ReadyForPickupRow = Awaited<ReturnType<typeof listReadyForPickup>>[number];
 
-/** Vista «Bolle da preparare»: tutto ciò che serve per compilare il documento, in una sola query. */
-export async function listDeliveryForms() {
+/**
+ * Vista «Bolle da preparare»: tutto ciò che serve per compilare il documento, in una sola query.
+ * `mode` = modalità della bolla (Impostazioni → Bolla di consegna).
+ */
+export async function listDeliveryForms(mode: BollaMode) {
   const rows = await db.query.sampleRequests.findMany({
     where: and(eq(sampleRequests.status, "PRONTA_RITIRO"), eq(sampleRequests.deliveryFormRequired, true)),
     orderBy: [asc(sampleRequests.receivedAt), asc(sampleRequests.id)],
@@ -128,7 +135,7 @@ export async function listDeliveryForms() {
       totalM2: r.pieces.reduce((sum, p) => sum + Number(p.areaM2 || 0), 0),
       piecesCount: r.pieces.reduce((sum, p) => sum + p.quantity, 0),
       ddtAttachment,
-      bollaReady: bollaSatisfied({ ...r, hasDdtAttachment: ddtAttachment !== null }),
+      bollaReady: bollaSatisfied({ ...r, hasDdtAttachment: ddtAttachment !== null, bollaMode: mode }),
     };
   });
 }
@@ -144,6 +151,8 @@ export async function listShippedAwaitingTracking() {
       trackingNumber: sampleRequests.trackingNumber,
       shipmentDate: sampleRequests.shipmentDate,
       deliveryFormRequired: sampleRequests.deliveryFormRequired,
+      ddtNumber: sampleRequests.ddtNumber,
+      bollaNumber: sampleRequests.bollaNumber,
       recipientName: sampleRequests.recipientName,
       attentionOf: sampleRequests.attentionOf,
       destinationAddress: sampleRequests.destinationAddress,
@@ -195,6 +204,7 @@ export async function listRecentlyCompleted(options: { missingCostOnly: boolean;
       notificationSentAt: sampleRequests.notificationSentAt,
       shippingCost: sampleRequests.shippingCost,
       ddtNumber: sampleRequests.ddtNumber,
+      bollaNumber: sampleRequests.bollaNumber,
       contactName: contacts.name,
       carrierName: carriers.name,
     })

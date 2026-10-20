@@ -25,19 +25,24 @@ export function shortAddress(address: string | null | undefined, max = 60): stri
 }
 
 /** Dati della consegna precompilati dal contatto scelto (modificabili nel form). */
-export type ContactPrefill = { recipientName: string; destinationAddress: string; phone: string };
+export type ContactPrefill = { recipientName: string; destinationAddress: string; country: string; phone: string };
 
-export const EMPTY_PREFILL: ContactPrefill = { recipientName: "", destinationAddress: "", phone: "" };
+export const EMPTY_PREFILL: ContactPrefill = { recipientName: "", destinationAddress: "", country: "", phone: "" };
 
-/** Destinatario = nome del contatto, indirizzo = indirizzo predefinito (senza riga del nome), telefono per il preavviso. */
+/**
+ * Destinatario = nome del contatto, indirizzo = indirizzo predefinito (senza riga del nome), paese di
+ * consegna = paese del contatto, telefono per il preavviso.
+ */
 export function contactPrefill(c: {
   name: string;
   defaultAddress?: string | null;
+  country?: string | null;
   phone?: string | null;
 }): ContactPrefill {
   return {
     recipientName: c.name.trim(),
     destinationAddress: c.defaultAddress?.trim() ?? "",
+    country: c.country?.trim() ?? "",
     phone: c.phone?.trim() ?? "",
   };
 }

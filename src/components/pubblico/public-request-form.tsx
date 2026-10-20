@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { submitPublicRequest } from "@/app/richiedi-campioni/actions";
+import { COUNTRY_SUGGESTIONS } from "@/components/anagrafiche/constants";
 import { PendingButton, useFormAction } from "@/components/impostazioni/form-kit";
 import { ProductPicker } from "@/components/pickers/product-picker";
 import type { ProductOption } from "@/components/pickers/types";
@@ -134,6 +135,8 @@ function PublicRequestForm({
   const [requesterPhone, setRequesterPhone] = useState("");
   const [recipientName, setRecipientName] = useState("");
   const [isPrivate, setIsPrivate] = useState(false);
+  // Conservato anche se si spunta «privato» e poi si toglie la spunta.
+  const [attentionOf, setAttentionOf] = useState("");
   const [phoneNotice, setPhoneNotice] = useState<YesNo | null>(null);
   /** null = non modificato: per il cliente propone il telefono indicato nei suoi dati. */
   const [noticeNumber, setNoticeNumber] = useState<string | null>(null);
@@ -333,18 +336,18 @@ function PublicRequestForm({
             </label>
             {companyButPrivate ? (
               <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-200" role="status">
-                «{recipientName.trim()}» sembra una ditta: se è così, togli la spunta e indica la persona a cui è
-                destinata.
+                «{recipientName.trim()}» sembra una ditta: se è così, togli la spunta e indica la persona a cui sono
+                destinati i campioni.
               </p>
             ) : null}
           </div>
           {!isPrivate ? (
             <Field
-              label="Alla c.a. di (persona a cui è destinata)"
+              label="Alla c.a. di"
               htmlFor="attentionOf"
               required
               error={err("attentionOf")}
-              hint="Nome e cognome della persona della ditta che riceverà i campioni."
+              hint="Nome e cognome della persona a cui sono destinati i campioni."
             >
               <Input
                 id="attentionOf"
@@ -352,6 +355,8 @@ function PublicRequestForm({
                 required
                 maxLength={200}
                 autoComplete={isAgent ? "off" : "name"}
+                value={attentionOf}
+                onChange={(e) => setAttentionOf(e.target.value)}
                 className={TEXT_FIELD}
                 aria-invalid={invalid("attentionOf")}
               />
@@ -402,10 +407,16 @@ function PublicRequestForm({
                 name="country"
                 maxLength={80}
                 placeholder="Italia"
+                list="country-suggestions"
                 autoComplete={isAgent ? "off" : "country-name"}
                 className={TEXT_FIELD}
                 aria-invalid={invalid("country")}
               />
+              <datalist id="country-suggestions">
+                {COUNTRY_SUGGESTIONS.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
             </Field>
             <Field
               label={isAgent ? "Lingua del cliente" : "Lingua preferita"}
@@ -743,7 +754,9 @@ function ThankYou({ result, onNewRequest }: { result?: PublicRequestResult; onNe
         {result?.recipient ? (
           <>
             Il nostro ufficio verificherà la richiesta e preparerà al più presto i campioni per{" "}
-            <span className="font-medium text-slate-800">{result.recipient}</span>.
+            <span className="font-medium text-slate-800">{result.recipient}</span>
+            {/* «Rossi S.r.l.» finisce già con il punto: niente punto doppio. */}
+            {result.recipient.trimEnd().endsWith(".") ? "" : "."}
           </>
         ) : (
           "Il nostro ufficio verificherà la richiesta e preparerà i campioni al più presto."

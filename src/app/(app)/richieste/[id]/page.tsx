@@ -23,8 +23,10 @@ import { formatDateTime, parseRequestCode, requestCode, romeIsoDate, todayIso } 
 import { getRequestDetail, type RequestDetail } from "@/lib/requests/queries";
 import { getWorkflowSnapshot } from "@/lib/requests/service";
 import { EDITABLE_IN } from "@/lib/requests/workflow";
+import type { BollaRules } from "@/lib/config/bolla";
 import { can, canViewRequestInStatus, ROLE_HOME } from "@/lib/roles";
 import { looksLikeCompany } from "@/lib/sample-formats";
+import { getSetting } from "@/lib/settings";
 import { STATUS_LABELS, STATUS_ORDER } from "@/lib/status";
 
 type Flash = { tone: "success" | "warning"; text: string };
@@ -84,7 +86,7 @@ function backLink(user: SessionUser) {
   return { href, label: item?.label ?? "Torna all'elenco" };
 }
 
-function editConfig(request: RequestDetail, user: SessionUser): RequestEditConfig | null {
+function editConfig(request: RequestDetail, user: SessionUser, bollaRules: BollaRules): RequestEditConfig | null {
   if (!can(user.role, "requests.manage") || !EDITABLE_IN.info.includes(request.status)) return null;
   const c = request.contact;
   const itemsEditable = EDITABLE_IN.items.includes(request.status);
@@ -93,6 +95,7 @@ function editConfig(request: RequestDetail, user: SessionUser): RequestEditConfi
     today: todayIso(),
     itemsEditable,
     canSendToWarehouse: request.status === "NUOVA",
+    bollaRules,
     itemsLockedReason: itemsEditable
       ? undefined
       : `Nello stato «${STATUS_LABELS[request.status]}» i prodotti non sono più modificabili: per cambiarli riporta prima la richiesta a «In preparazione».`,
@@ -115,10 +118,12 @@ function editConfig(request: RequestDetail, user: SessionUser): RequestEditConfi
       recipientName: request.recipientName ?? "",
       attentionOf: request.attentionOf ?? "",
       destinationAddress: request.destinationAddress,
+      destinationCountry: request.destinationCountry ?? c.country ?? "",
       phoneNotice: request.phoneNotice,
       phoneNoticeNumber: request.phoneNoticeNumber ?? "",
       notes: request.notes ?? "",
       deliveryFormRequired: request.deliveryFormRequired,
+      packagesCount: request.packagesCount,
       receivedDate: romeIsoDate(request.receivedAt),
       items: request.items.map((i) => ({
         key: `riga-${i.id}`,
@@ -140,7 +145,11 @@ export default async function RichiestaDettaglioPage({ params, searchParams }: P
   const id = parseId((await params).id);
   if (!id) notFound();
 
-  const [request, snapshot] = await Promise.all([getRequestDetail(id), getWorkflowSnapshot(id)]);
+  const [request, snapshot, bollaConfig] = await Promise.all([
+    getRequestDetail(id),
+    getWorkflowSnapshot(id),
+    getSetting("bollaConfig"),
+  ]);
   if (!request || !snapshot) notFound();
   if (!canViewRequestInStatus(user.role, request.status)) redirect(ROLE_HOME[user.role]);
 
@@ -153,7 +162,7 @@ export default async function RichiestaDettaglioPage({ params, searchParams }: P
 
   const infoPanel = (
     <RequestInfoCard
-      edit={editConfig(request, user)}
+      edit={editConfig(request, user, bollaConfig.rules)}
       description={`${request.items.length} prodott${request.items.length === 1 ? "o" : "i"} · contatto, destinatario e consegna`}
     >
       <RequestInfoView request={request} canViewRegistry={can(user.role, "registry.view")} />

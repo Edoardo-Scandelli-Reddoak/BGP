@@ -123,6 +123,8 @@ export async function WarehousePanel({
   const linesPerProduct = new Map<number, number>();
   for (const item of request.items) linesPerProduct.set(item.productId, (linesPerProduct.get(item.productId) ?? 0) + 1);
   const missingFormat = request.items.filter((i) => sampleFormatMissing(i.sampleFormat, i.formatNote)).length;
+  // Back office e amministratore possono correggere i prodotti da soli; il magazzino deve chiedere.
+  const canEditItems = can(user.role, "requests.manage") && EDITABLE_IN.items.includes(request.status);
   const { readyInfo, bollaNotice } = readyDetails(request);
 
   const description = editable
@@ -160,8 +162,17 @@ export async function WarehousePanel({
                   : `Formato del campione non indicato per ${missingFormat} prodotti.`
               }
             >
-              Prima di preparare chiedi al back office se servono doghe intere, mezze doghe, mazzetta, pannello o
-              espositore: può indicarlo modificando i prodotti della richiesta.
+              {canEditItems ? (
+                <>
+                  Indica il formato modificando i prodotti della richiesta («Modifica» nella scheda Richiesta): doghe
+                  intere, mezze doghe, mazzetta, pannello o espositore.
+                </>
+              ) : (
+                <>
+                  Prima di preparare chiedi al back office se servono doghe intere, mezze doghe, mazzetta, pannello o
+                  espositore: può indicarlo modificando i prodotti della richiesta.
+                </>
+              )}
             </Alert>
           ) : null}
           {request.notes ? (

@@ -58,10 +58,61 @@ cruscotto usano tutti la stessa regola.
 | Logistica | Pronte per il ritiro · Bolle da preparare · Spedite senza tracking | Spedizione, bolla, DDT, tracking, costi |
 | Direzione | Cruscotto · Storico completo | Sola lettura: stato, volumi, costi per cliente, conteggi per contatto/prodotto/paese; storico ed export CSV con destinatario e formato dei campioni |
 | Ufficio CRM | Report m² mensile | m² per prodotto del mese, export CSV per il CRM |
-| Amministratore | tutto | Utenti, destinatari email, template, corrieri, dati della bolla, registro email |
+| Amministratore | tutto | Utenti, destinatari email, template, corrieri, dati della bolla, registro email e le [impostazioni di BGP](#impostazioni-di-bgp): costi per cliente, bolla di consegna, export m² per il CRM |
 
 Agenti e clienti inviano le richieste dal **modulo pubblico** `/richiedi-campioni`, senza login.
 I contatti nuovi creati dal modulo vengono segnalati al back office come «da verificare».
+
+## Impostazioni di BGP
+
+Tre scelte del processo le fa BGP da sola, in *Impostazioni* (solo amministratore). I valori iniziali
+riproducono il comportamento di prima, quindi nulla cambia finché qualcuno non li modifica. Ogni pagina
+spiega cosa succede, mostra un'anteprima dal vivo e controlla i campi prima di salvare.
+
+**Costi** (`/impostazioni/costi`) — cosa sono i «costi per cliente» del cruscotto della direzione: il costo di
+ogni richiesta spedita è la somma delle voci attive, ricalcolata sempre con le impostazioni attuali (anche per
+i mesi passati).
+
+| Voce | Come si calcola |
+|---|---|
+| Corriere | Importo inserito dalla logistica («Costo spedizione») |
+| Gestione richiesta | € fissi per ogni richiesta spedita |
+| Imballo | € per collo × colli indicati dal magazzino |
+| Peso | € per kg × peso indicato dal magazzino |
+| Valore campioni | m² spediti × € al m²; facoltativo: il prezzo al m² del prodotto, se indicato in anagrafica |
+| Voci manuali | Fino a 10 voci con un nome a scelta (es. «Imballo speciale»), importo inserito dalla logistica su ogni richiesta |
+
+Ogni voce si attiva/disattiva e si rinomina (il nome è l'intestazione nei report). Una voce manuale disattivata
+sparisce da logistica e totali ma i suoi importi restano salvati e tornano riattivandola; eliminandola gli importi
+restano nel database e tornano se si ricrea una voce con lo stesso nome. La pagina ha un esempio di calcolo con
+i valori medi delle ultime spedizioni.
+
+**Bolla di consegna** (`/impostazioni/bolla`) — chi la prepara, come si numera, quando è obbligatoria:
+- *Modalità*: generata dal sistema (PDF sul modello del DDT di BGP, numerazione propria), DDT dal gestionale BGP
+  (numero e/o PDF caricato dalla logistica, allegato alla conferma) oppure entrambe a scelta della logistica.
+  Vale anche per le richieste in corso: la pagina avvisa se qualcuna tornerebbe tra le «bolle da preparare».
+- *Numerazione* della bolla generata: formato con `{numero}` e `{anno}` (es. `C{numero}/{anno}` → `C0001/2026`),
+  cifre del numero, anteprima del prossimo numero. Riparte da 1 ogni anno. Il DDT è un documento fiscale: se la
+  bolla la genera il sistema va usata una serie dedicata concordata con il commercialista.
+- *Regole* che spuntano da sole «bolla di consegna richiesta»: sempre, spedizioni all'estero, formati del campione
+  (es. espositori), da N colli in su. Si applicano a richieste nuove o modificate e quando il magazzino segna
+  una richiesta pronta (i colli si conoscono solo allora); le richieste già registrate non cambiano. Le regole
+  aggiungono la bolla, non la tolgono: il back office può sempre spuntarla a mano.
+
+Intestazione, causale, porto e aspetto della bolla restano in *Bolla e azienda* (`/impostazioni/azienda`).
+
+**Export CRM** (`/impostazioni/export-crm`) — il file mensile dei m² per il CRM:
+- *Contenuto*: una riga per prodotto, per prodotto e cliente, per cliente o per agente; colonne scelte e ordinate
+  (mese, codice, descrizione, marchio, categoria, cliente, paese, agente, richieste, pezzi, m²).
+- *Formato*: CSV (separatore `;` `,` o tabulazione, decimali con virgola o punto, riga di intestazione) o Excel,
+  nome del file con `{mese}`. Anteprima con i dati veri di un mese e «Scarica il file di esempio».
+- *Invio automatico*: il giorno scelto (1-28) il sistema manda per email ai destinatari il file del mese
+  precedente, una sola volta per mese (se il server era spento, appena riparte). «Invia ora il mese precedente»
+  manda subito il file ai destinatari salvati, per prova; gli invii sono nel registro email.
+- *Webhook* (facoltativo, per il fornitore del CRM): lo stesso giorno un `POST` JSON firmato all'indirizzo https
+  indicato, intestazione `X-BGP-Signature: sha256=<HMAC SHA-256 del corpo con il segreto condiviso>`; la pagina
+  genera il segreto e ha una nota tecnica con un esempio del contenuto. Gli esiti degli invii automatici sono
+  elencati nella pagina.
 
 ## Sviluppo locale
 
@@ -116,7 +167,8 @@ docker run -p 127.0.0.1:3000:3000 --env-file /etc/campionature/.env.production c
 
 Il container applica le migrazioni all'avvio. Variabili: `DATABASE_URL`, `APP_URL` (usato nei link
 delle email), `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `TRUST_PROXY`, `APP_SECRET`
-(firma il gettone anti-bot del modulo pubblico; se manca si usa un valore derivato da `DATABASE_URL`).
+(firma il gettone anti-bot del modulo pubblico; se manca si usa un valore derivato da `DATABASE_URL`),
+`CRON_SECRET` e `SCHEDULER_ENABLED` (vedi sotto).
 La build non richiede variabili: i segreti si passano solo all'avvio (`--env-file` o segreti
 dell'orchestratore). `.dockerignore` esclude comunque tutti i file `.env*` (tranne `.env.example`) e `*.pem`,
 ma è meglio tenere il file di produzione fuori dalla cartella del progetto.
@@ -134,21 +186,41 @@ Modulo pubblico: campo trappola, gettone firmato (invio non prima di 3 secondi e
 massimo 5 richieste all'ora per email del richiedente e per IP, 300 all'ora in totale. Per un traffico
 ostile distribuito si può aggiungere un CAPTCHA (es. Cloudflare Turnstile).
 
+**Attività programmate.** L'invio mensile dell'export CRM parte da uno scheduler interno: ogni ora il server
+chiama `POST /api/cron/export-crm` su sé stesso, che invia solo se è il giorno giusto e il mese non è già stato
+inviato (con più istanze dell'app un lucchetto nel database evita doppi invii). La chiamata richiede
+`Authorization: Bearer <segreto>`: il segreto è `CRON_SECRET` se impostato, altrimenti un valore derivato da
+`DATABASE_URL`. Con `SCHEDULER_ENABLED=false` lo scheduler interno è spento e serve un cron esterno che chiami
+quell'indirizzo ogni ora con `CRON_SECRET` (in quel caso va impostato). La pagina *Impostazioni → Export CRM*
+avvisa se lo scheduler è spento.
+
 Primo avvio: eseguire `npm run db:seed` e l'import puntando `DATABASE_URL` al database di produzione,
 poi dalle *Impostazioni* configurare i destinatari di magazzino e logistica.
 
-## Punti da confermare con BGP
+## Decisioni che BGP può prendere da Impostazioni
 
-1. **Costi per cliente** nel cruscotto: oggi è il costo di spedizione inserito dalla logistica.
-2. **Bolla di consegna**: l'app genera un PDF sul modello del DDT di BGP e permette di caricare il DDT
-   del gestionale, che viene allegato alla conferma al cliente. Va deciso quale dei due usare.
-3. **m² nel CRM**: export CSV mensile da copiare; un collegamento automatico non è incluso.
-   Il mese è quello della data di spedizione, o della data di ritiro se la spedizione non ha data.
-4. **Marchio e categoria dei prodotti** (filtro «Marchio» dello storico e colonna Marchio del CSV m²):
+Le tre domande aperte con BGP sono diventate [impostazioni](#impostazioni-di-bgp) che BGP compila da sola.
+Finché nessuno le modifica vale il comportamento predefinito:
+
+1. **Costi per cliente** (*Impostazioni → Costi*): quali voci contano. Predefinito: solo il costo del corriere
+   inserito dalla logistica.
+2. **Bolla di consegna** (*Impostazioni → Bolla di consegna*): bolla generata dal sistema, DDT del gestionale o
+   entrambi, numerazione della bolla generata e regole che la rendono obbligatoria. Predefinito: entrambe a scelta
+   della logistica, numero `C0001/2026`, nessuna regola (la bolla la richiede il back office). Se BGP sceglie la
+   bolla generata, la serie di numerazione va concordata con il commercialista.
+3. **m² nel CRM** (*Impostazioni → Export CRM*): raggruppamento, colonne e formato del file, invio automatico
+   mensile per email e/o webhook verso il CRM. Predefinito: CSV per prodotto (`Codice;Descrizione;Marchio;Richieste;Pezzi;m2`,
+   virgola decimale), scaricato a mano, nessun invio automatico. Il mese è quello della data di spedizione, o
+   della data di ritiro se la spedizione non ha data.
+
+### Punti ancora da confermare con BGP
+
+1. **Marchio e categoria dei prodotti** (filtro «Marchio» dello storico e colonna Marchio del CSV m²):
    la lista prodotti di BGP ha solo codice e descrizione, quindi oggi sono vuoti. Servono? Se sì, basta
    un file con `Codice_articolo` e `Marchio` (es. SmartFloors, Gaia Parquet, AFAP, Aquawood) ed
    eventualmente `Categoria`, da caricare con l'import prodotti.
-5. **Paese dei contatti esteri**: nel file Airtable la sigla tra parentesi non distingue sempre l'estero.
+2. **Paese dei contatti esteri**: nel file Airtable la sigla tra parentesi non distingue sempre l'estero.
    `(EE)` e i CAP non italiani restano senza paese («Paese non indicato», da completare in anagrafica);
    due indirizzi esteri con CAP a 5 cifre e sigla uguale a una provincia (`71000 SARAJEVO (BA)`,
-   `21233 CENEJ (SR)`) risultano Italia e vanno corretti a mano. Meglio aggiungere una colonna `Country`.
+   `21233 CENEJ (SR)`) risultano Italia e vanno corretti a mano. Meglio aggiungere una colonna `Country`:
+   il paese serve anche alla regola «spedizioni all'estero» della bolla.

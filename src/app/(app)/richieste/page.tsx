@@ -14,6 +14,7 @@ import { Pagination, parsePage } from "@/components/ui/pagination";
 import { requireUser } from "@/lib/auth/session";
 import { requestCode } from "@/lib/format";
 import { can } from "@/lib/roles";
+import { getSetting } from "@/lib/settings";
 import { OPEN_STATUSES, STATUS_LABELS } from "@/lib/status";
 import { parseDbId } from "@/lib/validation";
 import { getOpenRequests, OPEN_LIST_PAGE_SIZE } from "./list-query";
@@ -47,7 +48,10 @@ export default async function RichiestePage({ searchParams }: PageProps<"/richie
   const page = parsePage(sp.pagina);
   const deletedId = parseDbId(first(sp.eliminata));
 
-  const { rows, counts, totalOpen, total } = await getOpenRequests({ status, q, publicOnly, page });
+  const [{ rows, counts, totalOpen, total }, bollaConfig] = await Promise.all([
+    getOpenRequests({ status, q, publicOnly, page }),
+    getSetting("bollaConfig"),
+  ]);
   const filtered = Boolean(q || publicOnly || status);
 
   const tabs: { key: RequestStatus | null; label: string; count: number }[] = [
@@ -180,7 +184,7 @@ export default async function RichiestePage({ searchParams }: PageProps<"/richie
           )
         ) : (
           <>
-            <RequestList rows={rows} />
+            <RequestList rows={rows} bollaMode={bollaConfig.mode} />
             <Pagination
               page={page}
               pageSize={OPEN_LIST_PAGE_SIZE}

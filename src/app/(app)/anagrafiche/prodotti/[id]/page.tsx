@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { getAuthorizedUser, requireUser } from "@/lib/auth/session";
-import { formatDate, formatDateTime, formatKg, formatM2, formatNumber, requestCode } from "@/lib/format";
+import { formatDate, formatDateTime, formatEuro, formatKg, formatM2, formatNumber, requestCode } from "@/lib/format";
 import { can } from "@/lib/roles";
 import { parseDbId } from "@/lib/validation";
 import { deleteProduct } from "../../actions";
@@ -82,6 +82,7 @@ export default async function ProductDetailPage({ params, searchParams }: PagePr
                     format: product.format ?? "",
                     finish: product.finish ?? "",
                     unitWeightKg: product.unitWeightKg === null ? "" : String(product.unitWeightKg).replace(".", ","),
+                    pricePerM2: product.pricePerM2 === null ? "" : product.pricePerM2.toFixed(2).replace(".", ","),
                     active: product.active,
                   }}
                   brands={mergeSuggestions(BRAND_SUGGESTIONS, facets.brands)}
@@ -197,6 +198,16 @@ function ProductReadOnly({ data }: { data: ProductDetail }) {
       <DetailItem label="Categoria">{p.category}</DetailItem>
       <DetailItem label="Formato">{p.format}</DetailItem>
       <DetailItem label="Finitura">{p.finish}</DetailItem>
+      <DetailItem label="Prezzo al m²">
+        {p.pricePerM2 !== null ? (
+          <>
+            {formatEuro(p.pricePerM2)}/m²
+            <span className="block text-xs text-slate-500">
+              Usato per il valore dei campioni nei costi, se attivo in Impostazioni → Costi.
+            </span>
+          </>
+        ) : null}
+      </DetailItem>
     </dl>
   );
 }

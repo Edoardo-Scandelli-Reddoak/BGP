@@ -17,6 +17,8 @@ export type ProductFormValues = {
   finish: string;
   /** Già formattato per l'input ("1,25"). */
   unitWeightKg: string;
+  /** Prezzo al m² in euro, già formattato per l'input ("45,50"). */
+  pricePerM2: string;
   active: boolean;
 };
 
@@ -153,6 +155,24 @@ function ProductFields({
 
       <Field label="Finitura" htmlFor={f("finish")} error={errors.finish} hint="Es. spazzolato, vernice UV naturale">
         <Input id={f("finish")} name="finish" maxLength={200} defaultValue={initial.finish} autoComplete="off" />
+      </Field>
+
+      <Field
+        label="Prezzo al m² (€)"
+        htmlFor={f("pricePerM2")}
+        error={errors.pricePerM2}
+        hint="Facoltativo. Usato per il valore dei campioni nei costi, se attivo in Impostazioni → Costi."
+      >
+        <Input
+          id={f("pricePerM2")}
+          name="pricePerM2"
+          inputMode="decimal"
+          maxLength={12}
+          placeholder="Es. 45,50"
+          defaultValue={initial.pricePerM2}
+          aria-invalid={!!errors.pricePerM2 || undefined}
+          autoComplete="off"
+        />
       </Field>
 
       <div className="sm:col-span-2">

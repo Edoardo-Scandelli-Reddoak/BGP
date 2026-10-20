@@ -13,7 +13,10 @@ const TABS: { href: string; label: string; match: (path: string) => boolean }[] 
   { href: "/impostazioni/email", label: "Email e notifiche", match: (p) => p.startsWith("/impostazioni/email") },
   { href: "/impostazioni/template", label: "Template email", match: (p) => p.startsWith("/impostazioni/template") },
   { href: "/impostazioni/corrieri", label: "Corrieri", match: (p) => p.startsWith("/impostazioni/corrieri") },
+  { href: "/impostazioni/costi", label: "Costi", match: (p) => p.startsWith("/impostazioni/costi") },
+  { href: "/impostazioni/bolla", label: "Bolla di consegna", match: (p) => p.startsWith("/impostazioni/bolla") },
   { href: "/impostazioni/azienda", label: "Bolla e azienda", match: (p) => p.startsWith("/impostazioni/azienda") },
+  { href: "/impostazioni/export-crm", label: "Export CRM", match: (p) => p.startsWith("/impostazioni/export-crm") },
   {
     href: "/impostazioni/registro-email",
     label: "Registro email",

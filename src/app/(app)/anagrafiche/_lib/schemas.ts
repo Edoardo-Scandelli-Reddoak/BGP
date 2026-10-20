@@ -78,6 +78,17 @@ export const productInput = z.object({
       .refine((n) => n <= 99999, "Peso troppo alto")
       .nullable(),
   ),
+  /** Prezzo al m² in euro (valore dei campioni nei costi, se attivo in Impostazioni → Costi). */
+  pricePerM2: z.preprocess(
+    (v) => parseDecimal(typeof v === "string" ? v.replace(/€/g, "") : null),
+    z
+      .number({ error: "Prezzo non valido" })
+      .refine((n) => !Number.isNaN(n), "Prezzo non valido")
+      .refine((n) => n >= 0, "Il prezzo non può essere negativo")
+      .refine((n) => n <= 100_000, "Prezzo troppo alto")
+      .transform((n) => Math.round(n * 100) / 100)
+      .nullable(),
+  ),
   active: z.boolean(),
 });
 export type ProductInput = z.output<typeof productInput>;
@@ -115,6 +126,7 @@ export function productFromForm(fd: FormData) {
     format: formText(fd, "format"),
     finish: formText(fd, "finish"),
     unitWeightKg: formText(fd, "unitWeightKg"),
+    pricePerM2: formText(fd, "pricePerM2"),
     active: fd.get("active") === "on",
   };
 }

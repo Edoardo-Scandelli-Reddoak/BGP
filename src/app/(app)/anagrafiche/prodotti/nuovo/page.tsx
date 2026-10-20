@@ -39,6 +39,7 @@ export default async function NewProductPage({ searchParams }: PageProps<"/anagr
                 format: "",
                 finish: "",
                 unitWeightKg: "",
+                pricePerM2: "",
                 active: true,
               }}
               brands={mergeSuggestions(BRAND_SUGGESTIONS, facets.brands)}

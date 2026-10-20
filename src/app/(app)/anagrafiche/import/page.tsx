@@ -62,15 +62,17 @@ export default async function ImportPage() {
                 columns={[
                   ["Codice_articolo", "codice articolo del gestionale BGP", true],
                   ["Descrizione_articolo_estesa", "descrizione mostrata nei moduli, nelle email e nella bolla"],
+                  ["Prezzo_m2", "facoltativa: prezzo al m² in euro, es. 45,50 (valore dei campioni nei costi, se attivo in Impostazioni → Costi)"],
                 ]}
-                extra="Sono accettate anche le intestazioni Codice, SKU, Descrizione, Description."
+                extra="Sono accettate anche le intestazioni Codice, SKU, Descrizione, Description, Prezzo al m2 / Prezzo m². Facoltative anche Marchio e Categoria."
               />
               <Rules
                 items={[
                   "I prodotti sono riconosciuti dal codice, senza distinzione tra maiuscole e minuscole.",
                   "Se la descrizione è cambiata viene aggiornata; i prodotti disattivati presenti nel file vengono riattivati.",
-                  "Marchio, categoria, formato e finitura inseriti a mano non vengono modificati.",
-                  "Codici ripetuti nel file vengono segnalati: vale l'ultima riga.",
+                  "Marchio, categoria e prezzo al m² vengono aggiornati solo se la cella è compilata: le celle vuote non cancellano i valori salvati. Un prezzo non numerico viene ignorato e segnalato nel riepilogo.",
+                  "Formato e finitura inseriti a mano non vengono modificati.",
+                  "Codici ripetuti nel file vengono segnalati: vale la prima riga.",
                 ]}
               />
               <ImportForm kind="prodotti" />

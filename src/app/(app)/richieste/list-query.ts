@@ -30,13 +30,17 @@ export type OpenListRow = {
   deliveryFormRequired: boolean;
   deliveryFormReady: boolean;
   ddtNumber: string | null;
+  /** Numero della bolla generata dal sistema (null = non generata). */
+  bollaNumber: string | null;
   /** C'è un DDT caricato (conta come bolla pronta, stessa regola della logistica). */
   hasDdt: boolean;
   contactId: number;
   contactName: string;
   contactNeedsReview: boolean;
   agentName: string | null;
-  itemsCount: number;
+  /** Prodotti diversi richiesti (lo stesso prodotto in due formati conta una volta). */
+  productsCount: number;
+  /** Primi codici, senza ripetizioni. */
   firstCodes: string[];
 };
 
@@ -97,6 +101,7 @@ export async function getOpenRequests(f: OpenListFilters) {
       deliveryFormRequired: sampleRequests.deliveryFormRequired,
       deliveryFormReady: sampleRequests.deliveryFormReady,
       ddtNumber: sampleRequests.ddtNumber,
+      bollaNumber: sampleRequests.bollaNumber,
       hasDdt: hasDdtSql,
       contactId: contacts.id,
       contactName: contacts.name,
@@ -120,16 +125,17 @@ export async function getOpenRequests(f: OpenListFilters) {
         .where(inArray(requestItems.requestId, ids))
         .orderBy(asc(requestItems.requestId), asc(requestItems.id))
     : [];
-  const codesByRequest = new Map<number, string[]>();
+  // Codici distinti nell'ordine delle righe: lo stesso prodotto in più formati è un solo prodotto.
+  const codesByRequest = new Map<number, Set<string>>();
   for (const it of items) {
-    const list = codesByRequest.get(it.requestId) ?? [];
-    list.push(it.code);
-    codesByRequest.set(it.requestId, list);
+    const set = codesByRequest.get(it.requestId) ?? new Set<string>();
+    set.add(it.code);
+    codesByRequest.set(it.requestId, set);
   }
 
   const list: OpenListRow[] = rows.map((r) => {
-    const codes = codesByRequest.get(r.id) ?? [];
-    return { ...r, itemsCount: codes.length, firstCodes: codes.slice(0, 2) };
+    const codes = [...(codesByRequest.get(r.id) ?? [])];
+    return { ...r, productsCount: codes.length, firstCodes: codes.slice(0, 2) };
   });
 
   return { rows: list, counts, totalOpen, total };

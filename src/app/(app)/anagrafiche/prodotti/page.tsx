@@ -14,8 +14,9 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Pagination, parsePage } from "@/components/ui/pagination";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { requireUser } from "@/lib/auth/session";
-import { formatM2, formatNumber } from "@/lib/format";
+import { formatEuro, formatM2, formatNumber } from "@/lib/format";
 import { can } from "@/lib/roles";
+import { getSetting } from "@/lib/settings";
 import { listProductFacets, listProducts, param, parseProductFilters } from "../_lib/queries";
 
 export const metadata: Metadata = { title: "Prodotti" };
@@ -29,7 +30,14 @@ export default async function ProductsPage({ searchParams }: PageProps<"/anagraf
   const page = parsePage(sp.pagina);
   const canEdit = can(user.role, "registry.edit");
 
-  const [{ rows, total }, facets] = await Promise.all([listProducts(filters, page), listProductFacets()]);
+  const [{ rows, total }, facets, costConfig] = await Promise.all([
+    listProducts(filters, page),
+    listProductFacets(),
+    getSetting("costConfig"),
+  ]);
+  // Colonna del prezzo al m² solo se serve: prezzi già indicati o valore dei campioni dai prezzi attivo nei costi.
+  const showPrice =
+    rows.some((p) => p.pricePerM2 !== null) || (costConfig.perM2.enabled && costConfig.perM2.useProductPrice);
 
   const params: Record<string, string | undefined> = {
     q: filters.q || undefined,
@@ -180,6 +188,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/anagraf
                   <TH>Marchio</TH>
                   <TH>Categoria</TH>
                   <TH>Stato</TH>
+                  {showPrice ? <TH className="text-right">Prezzo al m²</TH> : null}
                   <TH className="text-right">Volte richiesto</TH>
                   <TH className="text-right">m² inviati</TH>
                 </tr>
@@ -200,6 +209,11 @@ export default async function ProductsPage({ searchParams }: PageProps<"/anagraf
                     <TD className="whitespace-nowrap">{p.brand || <span className="text-slate-400">—</span>}</TD>
                     <TD className="whitespace-nowrap">{p.category || <span className="text-slate-400">—</span>}</TD>
                     <TD>{p.active ? <Badge tone="green">Attivo</Badge> : <Badge tone="slate">Disattivato</Badge>}</TD>
+                    {showPrice ? (
+                      <TD className="whitespace-nowrap text-right tabular-nums">
+                        {p.pricePerM2 !== null ? formatEuro(p.pricePerM2) : <span className="text-slate-400">—</span>}
+                      </TD>
+                    ) : null}
                     <TD className="text-right tabular-nums">{p.times || <span className="text-slate-400">0</span>}</TD>
                     <TD className="whitespace-nowrap text-right tabular-nums">
                       {p.m2 > 0 ? formatM2(p.m2) : <span className="text-slate-400">—</span>}

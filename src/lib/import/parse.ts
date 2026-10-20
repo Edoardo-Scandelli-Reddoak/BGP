@@ -1,12 +1,13 @@
 import type { Language } from "@/db/schema";
 import { formatEmailList, parseEmailList } from "@/lib/email/recipients";
+import { parseDecimal } from "@/lib/format";
 
 /**
  * Lettura e normalizzazione dei file di BGP:
  *  - contatti: export Airtable "Lista_clienti_Airtable.xlsx"
  *    colonne Name | Email | Default address | Agent name | Agent email (cc) | Language
  *  - prodotti: "Product list.xlsx" — colonne Codice_articolo | Descrizione_articolo_estesa
- *    (+ facoltative Marchio | Categoria)
+ *    (+ facoltative Marchio | Categoria | Prezzo_m2)
  * Le intestazioni sono riconosciute anche con varianti (italiano/inglese, maiuscole, spazi).
  */
 
@@ -44,9 +45,16 @@ export type ParsedProduct = {
   /** Colonne facoltative: null se assenti o vuote (non cancellano il valore salvato). */
   brand: string | null;
   category: string | null;
+  /** Prezzo al m² in euro: presente solo se la cella contiene un numero valido (altrimenti non si tocca). */
+  pricePerM2?: number;
 };
 
-export type ParseReport<T> = { rows: T[]; skipped: { row: number; reason: string }[] };
+export type ParseReport<T> = {
+  rows: T[];
+  skipped: { row: number; reason: string }[];
+  /** Righe importate con un valore ignorato (es. prezzo non numerico). */
+  warnings?: { row: number; reason: string }[];
+};
 
 const LANGUAGE_MAP: Record<string, Language> = {
   italiano: "it",
@@ -133,6 +141,25 @@ export function countryFromAddress(address: unknown, language: Language | null =
   return null;
 }
 
+/** Prezzo massimo accettato (come gli importi in Impostazioni → Costi). */
+const MAX_PRICE = 100_000;
+
+/**
+ * Prezzo in euro da una cella: numero oppure testo all'italiana ("45,50", "1.234,50 €", "€ 12").
+ * null = cella vuota; NaN = valore non valido (testo, negativo o troppo alto).
+ */
+export function parsePrice(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0 && value <= MAX_PRICE ? Math.round(value * 100) / 100 : NaN;
+  }
+  const s = str(value).replace(/€|\beuro?\b/gi, "").trim();
+  if (!s) return null;
+  if (!/^[\d\s.,]+$/.test(s)) return NaN;
+  const n = parseDecimal(s);
+  if (n === null || Number.isNaN(n) || n < 0 || n > MAX_PRICE) return NaN;
+  return Math.round(n * 100) / 100;
+}
+
 export function normalizeEmails(value: unknown): string | null {
   const list = parseEmailList(str(value));
   return list.length ? formatEmailList(list) : null;
@@ -178,6 +205,8 @@ export const IMPORT_COLUMNS = {
   description: ["Descrizione_articolo_estesa", "Descrizione articolo estesa", "Descrizione", "Description", "Product name"],
   brand: ["Marchio", "Brand"],
   category: ["Categoria", "Category"],
+  // le intestazioni si confrontano senza spazi né simboli: «Prezzo m²» diventa «prezzom»
+  pricePerM2: ["Prezzo_m2", "Prezzo al m2", "Prezzo m²", "Prezzo m2", "Prezzo al m²", "Prezzo/m2", "Price per m2", "Price m2"],
 };
 
 export function parseContactRows(rows: RawRow[]): {
@@ -236,6 +265,7 @@ export function parseContactRows(rows: RawRow[]): {
 export function parseProductRows(rows: RawRow[]): ParseReport<ParsedProduct> {
   const out = new Map<string, ParsedProduct>();
   const skipped: { row: number; reason: string }[] = [];
+  const warnings: { row: number; reason: string }[] = [];
   rows.forEach((row, i) => {
     const code = str(pick(row, IMPORT_COLUMNS.code));
     const description = str(pick(row, IMPORT_COLUMNS.description)).replace(/\s{2,}/g, " ");
@@ -250,9 +280,17 @@ export function parseProductRows(rows: RawRow[]): ParseReport<ParsedProduct> {
     }
     const brand = str(pick(row, IMPORT_COLUMNS.brand)).replace(/\s{2,}/g, " ") || null;
     const category = str(pick(row, IMPORT_COLUMNS.category)).replace(/\s{2,}/g, " ") || null;
-    out.set(k, { code, description, brand, category });
+    const product: ParsedProduct = { code, description, brand, category };
+    // Prezzo al m²: solo se la cella è un numero valido; un valore non valido viene ignorato e segnalato.
+    const priceCell = pick(row, IMPORT_COLUMNS.pricePerM2);
+    const price = parsePrice(priceCell);
+    if (price !== null && !Number.isNaN(price)) product.pricePerM2 = price;
+    else if (Number.isNaN(price)) {
+      warnings.push({ row: i + 2, reason: `${code}: prezzo al m² «${str(priceCell)}» non valido, non importato` });
+    }
+    out.set(k, product);
   });
-  return { rows: [...out.values()], skipped };
+  return { rows: [...out.values()], skipped, warnings };
 }
 
 /** CSV con separatore ";" o "," (rilevato dalla prima riga) e campi tra virgolette. */

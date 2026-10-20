@@ -8,7 +8,11 @@ import { getSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
 
-/** GET /api/richieste/[id]/bolla → bolla di consegna in PDF (generata al volo). */
+/**
+ * GET /api/richieste/[id]/bolla → bolla di consegna in PDF (composta al volo, senza assegnare numeri:
+ * il numero progressivo lo assegna solo «Genera bolla»). Con la bolla «generata dal sistema»
+ * (Impostazioni → Bolla di consegna) il PDF è disponibile solo dopo averla generata.
+ */
 export async function GET(request: NextRequest, ctx: RouteContext<"/api/richieste/[id]/bolla">) {
   const user = await getAuthorizedUser();
   if (!user) return Response.json({ error: "Non autenticato" }, { status: 401 });
@@ -24,9 +28,17 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/api/richiest
     return Response.json({ error: "Non hai accesso a questa richiesta." }, { status: 403 });
   }
 
+  const settings = await getSettings();
+  if (settings.bollaConfig.mode === "GENERATA" && !detail.bollaNumber?.trim()) {
+    return Response.json(
+      { error: "Bolla non ancora generata: usa «Genera bolla» nel pannello Spedizione della richiesta." },
+      { status: 409 },
+    );
+  }
+
   let pdf: Uint8Array;
   try {
-    pdf = await generateBollaPdf(detail, await getSettings());
+    pdf = await generateBollaPdf(detail, settings);
   } catch (err) {
     console.error(`Errore nella generazione della bolla ${requestCode(detail.id)}`, err);
     return Response.json({ error: "Impossibile generare la bolla." }, { status: 500 });

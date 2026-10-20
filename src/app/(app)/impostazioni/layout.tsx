@@ -9,7 +9,7 @@ export default async function SettingsLayout({ children }: LayoutProps<"/imposta
       <PageHeader
         eyebrow="Amministrazione"
         title="Impostazioni"
-        description="Utenti e ruoli, email automatiche, corrieri, dati della bolla e modulo pubblico."
+        description="Utenti e ruoli, email automatiche, corrieri, costi per cliente, bolla di consegna, export dei m² per il CRM e modulo pubblico."
       />
       <SettingsTabs />
       <div className="mt-6 space-y-6">{children}</div>

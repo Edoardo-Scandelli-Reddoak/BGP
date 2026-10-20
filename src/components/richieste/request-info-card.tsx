@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import type { BollaRules } from "@/lib/config/bolla";
 import { useRequestEditing } from "./request-editing";
 import { RequestForm, type RequestFormInitial } from "./request-form";
 
@@ -15,6 +16,8 @@ export type RequestEditConfig = {
   itemsLockedReason?: string;
   /** Richiesta ancora nuova: nel form compare anche «Salva e invia al magazzino». */
   canSendToWarehouse?: boolean;
+  /** Regole automatiche della bolla (Impostazioni → Bolla di consegna). */
+  bollaRules: BollaRules;
 };
 
 /** Pannello «Richiesta»: vista in sola lettura (children, dal server) e, per il back office, modifica sul posto. */
@@ -67,6 +70,7 @@ export function RequestInfoCard({
             itemsEditable={edit.itemsEditable}
             itemsLockedReason={edit.itemsLockedReason}
             canSendToWarehouse={edit.canSendToWarehouse}
+            bollaRules={edit.bollaRules}
             onCancel={() => setEditing(false)}
             onSaved={(m) => {
               setEditing(false);

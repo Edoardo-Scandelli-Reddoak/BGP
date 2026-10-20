@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
+import { CostBreakdown } from "@/components/report/cost-breakdown";
 import { KpiTile, StatusCountLink } from "@/components/report/kpi-tile";
 import { MonthlyBars } from "@/components/report/monthly-bars";
 import { PeriodFilter } from "@/components/report/period-filter";
@@ -15,6 +16,7 @@ import type { RequestStatus } from "@/db/schema";
 import { requireUser } from "@/lib/auth/session";
 import { formatEuro, formatM2, formatNumber, todayIso } from "@/lib/format";
 import {
+  dashboardCostComponents,
   getByAgent,
   getByContact,
   getByCountry,
@@ -22,16 +24,23 @@ import {
   getDashboardKpi,
   getMonthlySeries,
   getStatusDistribution,
+  type CostComponent,
+  type CostSummary,
 } from "@/lib/reports/dashboard";
 import { NONE_VALUE, toQueryString } from "@/lib/reports/history-filters";
 import { DEFAULT_PRESET, firstParam, resolvePeriod } from "@/lib/reports/period";
 import { countByStatus } from "@/lib/requests/service";
 import { can, type Permission } from "@/lib/roles";
+import { getSetting } from "@/lib/settings";
 import { STATUS_COLORS, STATUS_LABELS } from "@/lib/status";
 
 export const metadata: Metadata = { title: "Cruscotto direzione" };
 
 const TOP = 15;
+/** Oltre queste voci di costo la tabella clienti mostra il totale con il dettaglio su una seconda riga. */
+const MAX_COST_COLUMNS = 3;
+/** Pagina delle impostazioni con le voci di costo (solo amministratori). */
+const COSTS_SETTINGS_HREF = "/impostazioni/costi";
 const BREAKDOWNS = ["clienti", "prodotti", "paesi", "agenti"] as const;
 type Breakdown = (typeof BREAKDOWNS)[number];
 
@@ -54,14 +63,21 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
   const expanded = BREAKDOWNS.find((b) => b === tuttiParam) ?? null;
   const limitFor = (b: Breakdown) => (expanded === b ? null : TOP);
 
+  // costi = somma delle voci attive in Impostazioni → Costi
+  const costConfig = await getSetting("costConfig");
+  const costComponents = dashboardCostComponents(costConfig);
+  const hasCosts = costComponents.length > 0;
+  const costColumns = costComponents.length > 1 && costComponents.length <= MAX_COST_COLUMNS ? costComponents : [];
+  const costPartsOnSecondLine = costComponents.length > MAX_COST_COLUMNS;
+
   const [kpi, statusCounts, series, openCounts, byContact, byProduct, byCountry, byAgent] = await Promise.all([
-    getDashboardKpi(period),
+    getDashboardKpi(period, costConfig),
     getStatusDistribution(period),
     getMonthlySeries(period),
     countByStatus(),
-    getByContact(period, limitFor("clienti")),
+    getByContact(period, limitFor("clienti"), costConfig),
     getByProduct(period, limitFor("prodotti")),
-    getByCountry(period, limitFor("paesi")),
+    getByCountry(period, limitFor("paesi"), costConfig),
     getByAgent(period, limitFor("agenti")),
   ]);
 
@@ -71,6 +87,15 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
   const storico = (extra: Record<string, string | undefined>) => `/direzione/storico${toQueryString(extra)}`;
   const toggleHref = (b: Breakdown) =>
     `/direzione${toQueryString({ ...periodParams, tutti: expanded === b ? undefined : b })}#${b}`;
+
+  const canEditCosts = can(user.role, "settings.manage");
+  const costsSettings = canEditCosts ? (
+    <Link href={COSTS_SETTINGS_HREF} className="font-medium underline hover:text-brand-700">
+      Impostazioni → Costi
+    </Link>
+  ) : (
+    <strong>Impostazioni → Costi</strong>
+  );
 
   const hasSeries = series.some((p) => p.received > 0 || p.m2 > 0);
   const receivedInPeriod = Object.values(statusCounts).reduce((s, n) => s + n, 0);
@@ -101,12 +126,14 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
             <KpiTile label="Spedite" value={kpi.shipped} hint="Data di spedizione (o di ritiro) nel periodo" />
             <KpiTile label="m² spediti" value={formatM2(kpi.m2)} hint="Dalle misure del magazzino" />
             <KpiTile
-              label="Costo spedizioni"
+              label="Costi totali"
               value={kpi.cost === null ? NONE : formatEuro(kpi.cost)}
               hint={
-                kpi.avgCost === null
-                  ? "Nessun costo inserito"
-                  : `Media ${formatEuro(kpi.avgCost)} su ${kpi.costCount} spedizion${kpi.costCount === 1 ? "e" : "i"}`
+                !hasCosts
+                  ? "Nessuna voce di costo attiva"
+                  : kpi.avgCost === null
+                    ? "Nessun costo nel periodo"
+                    : `Media ${formatEuro(kpi.avgCost)} su ${kpi.costCount} spedizion${kpi.costCount === 1 ? "e" : "i"}`
               }
             />
             <KpiTile
@@ -116,6 +143,17 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
               className="col-span-2 md:col-span-1"
             />
           </div>
+          {costComponents.length > 1 && kpi.cost !== null ? (
+            <Card className="mt-3">
+              <CardHeader
+                title="Costi totali per voce"
+                description="Spedizioni del periodo, voci attive in Impostazioni → Costi"
+              />
+              <CardBody>
+                <CostBreakdown parts={costComponents.map((c) => ({ ...c, amount: kpi.costParts[c.key] ?? 0 }))} />
+              </CardBody>
+            </Card>
+          ) : null}
         </section>
 
         <section aria-labelledby="open-title">
@@ -195,16 +233,39 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
         </Card>
 
         <Alert tone="info" title="Come leggere le tabelle">
-          <strong>Richieste</strong> = ricevute nel periodo. <strong>Spedite</strong>, <strong>m²</strong> e{" "}
-          <strong>costi</strong> = richieste con data di spedizione nel periodo (se la logistica non l&apos;ha ancora
-          inserita, vale la data di ritiro). Il costo è il costo di spedizione inserito
-          dalla logistica (definizione da confermare con BGP).
+          <strong>Richieste</strong> = ricevute nel periodo.{" "}
+          {hasCosts ? (
+            <>
+              <strong>Spedite</strong>, <strong>m²</strong> e <strong>costi</strong>
+            </>
+          ) : (
+            <>
+              <strong>Spedite</strong> e <strong>m²</strong>
+            </>
+          )}{" "}
+          = richieste con data di spedizione nel periodo (se la logistica non l&apos;ha ancora inserita, vale la data
+          di ritiro).
+          {hasCosts ? (
+            <>
+              {" "}Il costo di una spedizione è la somma delle voci attive in {costsSettings}:{" "}
+              {LIST_FORMAT.format(costComponents.map((c) => c.label))}.
+            </>
+          ) : null}
         </Alert>
+
+        {!hasCosts ? (
+          <Alert tone="warning" title="Costi non calcolati">
+            Nessuna voce di costo è attiva in {costsSettings}: il cruscotto non mostra i costi per cliente e per paese.{" "}
+            {canEditCosts
+              ? "Attiva almeno una voce (ad esempio il costo del corriere) per vederli."
+              : "Le voci si attivano dalle impostazioni (amministratore)."}
+          </Alert>
+        ) : null}
 
         <BreakdownCard
           id="clienti"
           title="Costi e volumi per cliente"
-          description="Ordinati per costo di spedizione"
+          description={hasCosts ? "Ordinati per costo totale" : "Ordinati per m² spediti"}
           total={byContact.total}
           shown={byContact.rows.length}
           expanded={expanded === "clienti"}
@@ -217,8 +278,17 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
                 <TH className="text-right">Richieste</TH>
                 <TH className="text-right">Spedite</TH>
                 <TH className="text-right">m²</TH>
-                <TH className="text-right">Costo spedizioni</TH>
-                <TH className="text-right">Costo medio</TH>
+                {costColumns.map((c) => (
+                  <TH key={c.key} className="text-right">
+                    <span className="inline-block max-w-40 whitespace-normal">{c.label}</span>
+                  </TH>
+                ))}
+                {hasCosts ? (
+                  <>
+                    <TH className="text-right">Costo totale</TH>
+                    <TH className="text-right">Costo medio</TH>
+                  </>
+                ) : null}
               </tr>
             </THead>
             <TBody>
@@ -232,8 +302,20 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
                   <TD className="text-right tabular-nums">{r.requests}</TD>
                   <TD className="text-right tabular-nums">{r.shipments}</TD>
                   <TD className="whitespace-nowrap text-right tabular-nums">{formatM2(r.m2)}</TD>
-                  <TD className="whitespace-nowrap text-right font-medium tabular-nums">{r.cost === null ? NONE : formatEuro(r.cost)}</TD>
-                  <TD className="whitespace-nowrap text-right tabular-nums">{r.avgCost === null ? NONE : formatEuro(r.avgCost)}</TD>
+                  {costColumns.map((c) => (
+                    <TD key={c.key} className="whitespace-nowrap text-right tabular-nums">
+                      {r.cost === null ? NONE : formatEuro(r.costParts[c.key] ?? 0)}
+                    </TD>
+                  ))}
+                  {hasCosts ? (
+                    <>
+                      <TD className="whitespace-nowrap text-right font-medium tabular-nums">
+                        {r.cost === null ? NONE : formatEuro(r.cost)}
+                        {costPartsOnSecondLine && r.cost !== null ? <CostPartsLine row={r} components={costComponents} /> : null}
+                      </TD>
+                      <TD className="whitespace-nowrap text-right tabular-nums">{r.avgCost === null ? NONE : formatEuro(r.avgCost)}</TD>
+                    </>
+                  ) : null}
                 </TR>
               ))}
             </TBody>
@@ -297,7 +379,7 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
                   <TH>Paese</TH>
                   <TH className="text-right">Richieste</TH>
                   <TH className="text-right">m²</TH>
-                  <TH className="text-right">Costo</TH>
+                  {hasCosts ? <TH className="text-right">Costo totale</TH> : null}
                 </tr>
               </THead>
               <TBody>
@@ -313,7 +395,9 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
                     </TD>
                     <TD className="text-right tabular-nums">{r.requests}</TD>
                     <TD className="whitespace-nowrap text-right tabular-nums">{formatM2(r.m2)}</TD>
-                    <TD className="whitespace-nowrap text-right tabular-nums">{r.cost === null ? NONE : formatEuro(r.cost)}</TD>
+                    {hasCosts ? (
+                      <TD className="whitespace-nowrap text-right tabular-nums">{r.cost === null ? NONE : formatEuro(r.cost)}</TD>
+                    ) : null}
                   </TR>
                 ))}
               </TBody>
@@ -358,6 +442,26 @@ export default async function ManagementDashboardPage(props: PageProps<"/direzio
         </div>
       </div>
     </>
+  );
+}
+
+const LIST_FORMAT = new Intl.ListFormat("it", { style: "long", type: "conjunction" });
+
+/** Dettaglio per voce sotto il costo totale (quando le voci sono troppe per avere una colonna ciascuna). */
+function CostPartsLine({ row, components }: { row: CostSummary; components: CostComponent[] }) {
+  const parts = components.filter((c) => (row.costParts[c.key] ?? 0) > 0);
+  if (parts.length === 0) return null;
+  return (
+    <span className="mt-0.5 ml-auto block max-w-64 whitespace-normal text-xs font-normal text-slate-500">
+      {parts.map((c, i) => (
+        <Fragment key={c.key}>
+          {i > 0 ? " · " : null}
+          <span className="whitespace-nowrap">
+            {c.label} {formatEuro(row.costParts[c.key])}
+          </span>
+        </Fragment>
+      ))}
+    </span>
   );
 }
 

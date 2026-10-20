@@ -59,15 +59,20 @@ export function PhoneNoticeBadge({
   className?: string;
 }) {
   if (phoneNotice === true) {
+    // Su schermi stretti un numero lungo (o più numeri) va a capo invece di uscire dalla scheda.
     return (
       <span
         className={cn(
-          "inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold whitespace-nowrap text-amber-900 ring-1 ring-amber-500/60 ring-inset",
+          "inline-flex max-w-full min-w-0 items-start gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900 ring-1 ring-amber-500/60 ring-inset",
           className,
         )}
       >
-        <PhoneIcon />
-        Preavviso tel. {number?.trim() || "(numero mancante)"}
+        <span className="mt-px flex shrink-0">
+          <PhoneIcon />
+        </span>
+        <span className="min-w-0 wrap-anywhere">
+          <span className="whitespace-nowrap">Preavviso tel.</span> {number?.trim() || "(numero mancante)"}
+        </span>
       </span>
     );
   }
@@ -92,7 +97,7 @@ export function PhoneNoticeValue({ phoneNotice, number }: { phoneNotice: boolean
       {n ? (
         <>
           {" — tel. "}
-          <a href={telHref(n)} className="whitespace-nowrap text-brand-700 hover:underline">
+          <a href={telHref(n)} className="wrap-anywhere text-brand-700 hover:underline">
             {n}
           </a>
         </>

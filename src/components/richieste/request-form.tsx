@@ -11,6 +11,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { createRequestAction, updateRequestAction } from "@/app/(app)/richieste/actions";
+import { COUNTRY_SUGGESTIONS } from "@/components/anagrafiche/constants";
 import { ContactPicker } from "@/components/pickers/contact-picker";
 import type { ContactOption } from "@/components/pickers/types";
 import { ActionMessage, Alert } from "@/components/ui/alert";
@@ -18,6 +19,7 @@ import { buttonClasses, type ButtonVariant } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/form";
 import type { ActionResult } from "@/lib/action-result";
+import { bollaRuleReasons, DEFAULT_BOLLA_CONFIG, type BollaRules } from "@/lib/config/bolla";
 import { looksLikeCompany } from "@/lib/sample-formats";
 import { ContactSummary } from "./contact-summary";
 import { ItemsEditor, ItemsReadOnly, itemsToPayload, type ItemRow } from "./items-editor";
@@ -31,13 +33,17 @@ export type RequestFormInitial = {
   recipientName: string;
   /** «Alla c.a. di» (persona presso la ditta destinataria). */
   attentionOf: string;
-  /** Solo l'indirizzo (via, CAP, città, provincia, paese), senza il destinatario. */
+  /** Solo l'indirizzo (via, CAP, città, provincia), senza il destinatario. */
   destinationAddress: string;
+  /** Paese di consegna (precompilato con il paese del contatto). */
+  destinationCountry: string;
   /** Preavviso telefonico: null = non ancora indicato (nessuna scelta predefinita). */
   phoneNotice: boolean | null;
   phoneNoticeNumber: string;
   notes: string;
   deliveryFormRequired: boolean;
+  /** Colli già indicati dal magazzino (regola «da N colli in su» della bolla); null = non ancora. */
+  packagesCount?: number | null;
   /** YYYY-MM-DD */
   receivedDate: string;
   items: ItemRow[];
@@ -155,6 +161,7 @@ export function RequestForm({
   itemsLockedReason,
   newContactHref,
   canSendToWarehouse = false,
+  bollaRules = DEFAULT_BOLLA_CONFIG.rules,
   onCancel,
   onSaved,
 }: {
@@ -168,6 +175,8 @@ export function RequestForm({
   newContactHref?: string;
   /** Solo in modifica: offre «Salva e invia al magazzino» (richiesta ancora nuova). */
   canSendToWarehouse?: boolean;
+  /** Regole della bolla (Impostazioni → Bolla di consegna): il servizio le applica comunque al salvataggio. */
+  bollaRules?: BollaRules;
   onCancel?: () => void;
   onSaved?: (message?: string) => void;
 }) {
@@ -181,6 +190,7 @@ export function RequestForm({
   const [recipient, setRecipient] = useState(initial.recipientName);
   const [attentionOf, setAttentionOf] = useState(initial.attentionOf);
   const [destination, setDestination] = useState(initial.destinationAddress);
+  const [country, setCountry] = useState(initial.destinationCountry);
   const [phoneNotice, setPhoneNotice] = useState<boolean | null>(initial.phoneNotice);
   const [phoneNumber, setPhoneNumber] = useState(initial.phoneNoticeNumber);
   const [notes, setNotes] = useState(initial.notes);
@@ -212,6 +222,18 @@ export function RequestForm({
   const showSend = mode === "create" || canSendToWarehouse;
   const sendBlocked = Object.keys(sendErrors).length > 0;
   const attentionHint = looksLikeCompany(recipient) && !attentionOf.trim();
+  // Paese lasciato vuoto: il servizio usa quello del contatto (in modifica, a contatto invariato, quello salvato).
+  const fallbackCountry =
+    mode === "edit" && contact?.id === initial.contact?.id ? initial.destinationCountry : (contact?.country ?? "");
+  // Stesse regole del servizio; i colli («da N colli in su») li indica il magazzino più avanti.
+  const bollaAutoReasons = bollaRuleReasons(
+    {
+      destinationCountry: country.trim() || fallbackCountry.trim() || null,
+      itemFormats: items.map((i) => i.sampleFormat || null),
+      packagesCount: initial.packagesCount ?? null,
+    },
+    bollaRules,
+  );
 
   function dismiss(...keys: string[]) {
     setSendErrors((prev) => {
@@ -246,6 +268,10 @@ export function RequestForm({
     if (untouched(destination, prefilled.destinationAddress)) {
       setDestination(prefill.destinationAddress);
       if (prefill.destinationAddress) keys.push("destinationAddress");
+    }
+    if (untouched(country, prefilled.country)) {
+      setCountry(prefill.country);
+      if (prefill.country) keys.push("destinationCountry");
     }
     if (untouched(phoneNumber, prefilled.phone)) {
       setPhoneNumber(prefill.phone);
@@ -419,10 +445,10 @@ export function RequestForm({
               hint={
                 attentionHint ? (
                   <span className="font-medium text-amber-800">
-                    Il destinatario sembra una ditta: indica, se possibile, la persona a cui è destinata.
+                    Il destinatario sembra una ditta: indica, se possibile, la persona a cui sono destinati i campioni.
                   </span>
                 ) : (
-                  "Se il destinatario è una ditta: nominativo della persona a cui è destinata."
+                  "Se il destinatario è una ditta: la persona a cui sono destinati i campioni."
                 )
               }
             >
@@ -445,7 +471,7 @@ export function RequestForm({
             htmlFor={`${uid}-dest`}
             required
             error={errors.destinationAddress}
-            hint="Via, CAP, città, provincia; paese se estero. Precompilato dall'indirizzo del contatto."
+            hint="Via e numero civico, CAP, città e provincia. Precompilato dall'indirizzo del contatto."
           >
             <Textarea
               id={`${uid}-dest`}
@@ -461,6 +487,33 @@ export function RequestForm({
                 setDestination(e.target.value);
               }}
             />
+          </Field>
+          <Field
+            label="Paese di consegna"
+            htmlFor={`${uid}-country`}
+            error={errors.destinationCountry}
+            hint="Precompilato con il paese del contatto: modificalo se i campioni vanno all'estero o in un altro paese."
+            className="sm:max-w-sm"
+          >
+            <Input
+              id={`${uid}-country`}
+              name="destinationCountry"
+              list={`${uid}-countries`}
+              maxLength={60}
+              autoComplete="off"
+              placeholder={fallbackCountry || "Es. Italia"}
+              value={country}
+              aria-invalid={errors.destinationCountry ? true : undefined}
+              onChange={(e) => {
+                dismiss("destinationCountry");
+                setCountry(e.target.value);
+              }}
+            />
+            <datalist id={`${uid}-countries`}>
+              {COUNTRY_SUGGESTIONS.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
           </Field>
           <div className="grid items-start gap-4 sm:grid-cols-2">
             <PhoneNoticeChoice
@@ -521,13 +574,35 @@ export function RequestForm({
       <div className="border-t border-slate-100 pt-6">
         <fieldset className="space-y-4">
           <SectionTitle title="Altre informazioni" />
-          <Checkbox
-            name="deliveryFormRequired"
-            checked={bolla}
-            onChange={(e) => setBolla(e.target.checked)}
-            label="Bolla di consegna richiesta"
-            hint="La logistica deve preparare una bolla di consegna formale prima del ritiro."
-          />
+          {bollaAutoReasons.length > 0 ? (
+            <>
+              {/* La casella disattivata non viene inviata: il valore va comunque al servizio, che applica le regole. */}
+              <input type="hidden" name="deliveryFormRequired" value="on" />
+              <Checkbox
+                checked
+                disabled
+                readOnly
+                label="Bolla di consegna richiesta"
+                hint={
+                  <span className="font-medium text-amber-800">
+                    Richiesta automaticamente: {bollaAutoReasons.join(", ")}.
+                  </span>
+                }
+              />
+            </>
+          ) : (
+            <Checkbox
+              name="deliveryFormRequired"
+              checked={bolla}
+              onChange={(e) => setBolla(e.target.checked)}
+              label="Bolla di consegna richiesta"
+              hint={
+                bollaRules.minPackages
+                  ? `La logistica deve preparare una bolla di consegna formale prima del ritiro. Diventa obbligatoria in automatico da ${bollaRules.minPackages} colli in su (li indica il magazzino).`
+                  : "La logistica deve preparare una bolla di consegna formale prima del ritiro."
+              }
+            />
+          )}
           <Field label="Note" htmlFor={`${uid}-notes`} error={errors.notes} hint="Visibili a magazzino e logistica.">
             <Textarea
               id={`${uid}-notes`}

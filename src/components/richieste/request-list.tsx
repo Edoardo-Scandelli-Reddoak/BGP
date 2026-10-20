@@ -3,6 +3,7 @@ import type { OpenListRow } from "@/app/(app)/richieste/list-query";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { cn } from "@/components/ui/cn";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import type { BollaMode } from "@/lib/config/bolla";
 import { daysSince, formatDate, requestCode } from "@/lib/format";
 import { bollaSatisfied } from "@/lib/requests/workflow";
 import { ageLabel, shortAddress } from "./utils";
@@ -14,14 +15,17 @@ function isStale(row: OpenListRow, days: number) {
   return row.status === "NUOVA" && days > STALE_DAYS;
 }
 
+function productsLabel(n: number): string {
+  return `${n} prodott${n === 1 ? "o" : "i"}`;
+}
+
+/** Prodotti distinti (lo stesso prodotto in più formati conta una volta) e primi codici. */
 function ProductsSummary({ row }: { row: OpenListRow }) {
-  if (row.itemsCount === 0) return <span className="text-slate-400">Nessun prodotto</span>;
-  const others = row.itemsCount - row.firstCodes.length;
+  if (row.productsCount === 0) return <span className="text-slate-400">Nessun prodotto</span>;
+  const others = row.productsCount - row.firstCodes.length;
   return (
     <span className="text-sm">
-      <span className="font-medium text-slate-900">
-        {row.itemsCount} prodott{row.itemsCount === 1 ? "o" : "i"}
-      </span>
+      <span className="font-medium text-slate-900">{productsLabel(row.productsCount)}</span>
       <span className="block font-mono text-xs text-slate-500">
         {row.firstCodes.join(", ")}
         {others > 0 ? ` +${others}` : ""}
@@ -42,10 +46,20 @@ function SourceBadges({ row }: { row: OpenListRow }) {
   );
 }
 
-/** Preavviso telefonico richiesto: il numero compare passando sopra il badge. */
-function PhoneNoticeBadge({ row }: { row: OpenListRow }) {
+/**
+ * Preavviso telefonico richiesto. In tabella il numero compare passando sopra il badge; sulle schede
+ * (telefono, dove il passaggio del mouse non c'è) è scritto nel badge.
+ */
+function PhoneNoticeBadge({ row, showNumber = false }: { row: OpenListRow; showNumber?: boolean }) {
   if (!row.phoneNotice) return null;
   const number = row.phoneNoticeNumber?.trim();
+  if (showNumber) {
+    return (
+      <Badge tone="blue">
+        Preavviso tel.{number ? <span className="ml-1 tabular-nums">{number}</span> : null}
+      </Badge>
+    );
+  }
   return (
     <span title={number ? `Preavviso telefonico: ${number}` : "Preavviso telefonico prima della consegna"}>
       <Badge tone="blue">Preavviso tel.</Badge>
@@ -71,10 +85,10 @@ function Destination({ row }: { row: OpenListRow }) {
   );
 }
 
-/** Stessa regola della logistica: bolla pronta se segnata pronta, con numero DDT o con il DDT caricato. */
-function BollaBadge({ row }: { row: OpenListRow }) {
+/** Stessa regola della logistica, secondo la modalità della bolla (generata, DDT del gestionale o entrambe). */
+function BollaBadge({ row, mode }: { row: OpenListRow; mode: BollaMode }) {
   if (!row.deliveryFormRequired) return null;
-  const ready = bollaSatisfied({ ...row, hasDdtAttachment: row.hasDdt });
+  const ready = bollaSatisfied({ ...row, hasDdtAttachment: row.hasDdt, bollaMode: mode });
   return <Badge tone={ready ? "green" : "amber"}>{ready ? "Bolla pronta" : "Bolla da preparare"}</Badge>;
 }
 
@@ -95,7 +109,7 @@ function Received({ row, days }: { row: OpenListRow; days: number }) {
  * Elenco richieste aperte: tabella su schermi larghi, schede su telefono.
  * La bolla sta sotto lo stato (una colonna in meno): con la barra laterale la tabella entra in 960px.
  */
-export function RequestList({ rows }: { rows: OpenListRow[] }) {
+export function RequestList({ rows, bollaMode }: { rows: OpenListRow[]; bollaMode: BollaMode }) {
   const withAge = rows.map((row) => ({ row, days: daysSince(row.receivedAt) }));
   return (
     <>
@@ -139,7 +153,7 @@ export function RequestList({ rows }: { rows: OpenListRow[] }) {
                 <TD>
                   <span className="flex flex-col items-start gap-1">
                     <StatusBadge status={row.status} />
-                    <BollaBadge row={row} />
+                    <BollaBadge row={row} mode={bollaMode} />
                   </span>
                 </TD>
                 <TD>
@@ -171,8 +185,9 @@ export function RequestList({ rows }: { rows: OpenListRow[] }) {
                   {formatDate(row.receivedAt)} · {ageLabel(days)}
                 </span>
                 <span>
-                  {row.itemsCount} prodott{row.itemsCount === 1 ? "o" : "i"}
+                  {productsLabel(row.productsCount)}
                   {row.firstCodes.length ? ` · ${row.firstCodes.join(", ")}` : ""}
+                  {row.productsCount > row.firstCodes.length ? ` +${row.productsCount - row.firstCodes.length}` : ""}
                 </span>
               </div>
               {row.recipientName?.trim() || row.destinationAddress ? (
@@ -181,8 +196,8 @@ export function RequestList({ rows }: { rows: OpenListRow[] }) {
                 </p>
               ) : null}
               <div className="mt-2 flex flex-wrap gap-1 empty:hidden">
-                <BollaBadge row={row} />
-                <PhoneNoticeBadge row={row} />
+                <BollaBadge row={row} mode={bollaMode} />
+                <PhoneNoticeBadge row={row} showNumber />
                 {row.source === "MODULO_PUBBLICO" ? <Badge tone="violet">Modulo pubblico</Badge> : null}
                 {row.contactNeedsReview ? <Badge tone="amber">Contatto da verificare</Badge> : null}
               </div>

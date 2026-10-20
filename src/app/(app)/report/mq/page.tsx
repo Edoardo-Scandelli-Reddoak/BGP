@@ -12,14 +12,49 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import type { RequestStatus } from "@/db/schema";
 import { requireUser } from "@/lib/auth/session";
+import { CRM_COLUMNS, CRM_GROUP_BY_LABELS, crmFileName, type CrmExportConfig } from "@/lib/config/crm-export";
 import { currentMonthIso, formatDate, formatM2, formatMonth, requestCode } from "@/lib/format";
 import { getMonthlyM2Report, type M2Shipment } from "@/lib/reports/m2";
 import { addMonths, firstParam, isIsoMonth, recentMonths } from "@/lib/reports/period";
-import { canViewRequestInStatus } from "@/lib/roles";
+import { can, canViewRequestInStatus } from "@/lib/roles";
+import { getSetting } from "@/lib/settings";
 
 export const metadata: Metadata = { title: "Report m² mensile" };
 
 const MONTHS_IN_SELECT = 24;
+/** Pagina delle impostazioni dell'export (solo amministratori). */
+const CRM_SETTINGS_HREF = "/impostazioni/export-crm";
+
+const SEPARATOR_LABELS: Record<CrmExportConfig["separator"], string> = {
+  ";": "punto e virgola",
+  ",": "virgola",
+  "\t": "tabulazione",
+};
+
+/** "CSV per prodotto · colonne: Codice, Descrizione, …" e i dettagli del file e dell'invio. */
+function describeCrmExport(config: CrmExportConfig, month: string) {
+  const summary = `${config.format === "XLSX" ? "Excel" : "CSV"} ${CRM_GROUP_BY_LABELS[config.groupBy].toLowerCase()} · colonne: ${config.columns
+    .map((c) => CRM_COLUMNS[c])
+    .join(", ")}`;
+  const details = [
+    `file ${crmFileName(config, month)}`,
+    ...(config.format === "CSV"
+      ? [
+          `separatore ${SEPARATOR_LABELS[config.separator]}`,
+          `decimali con ${config.decimal === "," ? "la virgola" : "il punto"}`,
+        ]
+      : []),
+    config.header ? "con intestazione" : "senza intestazione",
+  ];
+  const n = config.autoSend.recipients.length;
+  const sending = [
+    config.autoSend.enabled && n > 0
+      ? `invio automatico via email il giorno ${config.autoSend.day} di ogni mese (mese precedente) a ${n} destinatar${n === 1 ? "io" : "i"}`
+      : null,
+    config.webhook.enabled ? "invio automatico al CRM (webhook) attivo" : null,
+  ].filter((x): x is string => x !== null);
+  return { summary, details: details.join(" · "), sending: sending.length ? sending.join(" · ") : "invio automatico non attivo" };
+}
 
 /** Data del mese di conteggio: la data di spedizione, oppure quella di ritiro se manca. */
 function ShipmentDate({ shipment }: { shipment: M2Shipment }) {
@@ -38,7 +73,8 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
   const requested = firstParam(sp.mese);
   const month = isIsoMonth(requested) ? requested : current;
 
-  const report = await getMonthlyM2Report(month);
+  const [report, crmExport] = await Promise.all([getMonthlyM2Report(month), getSetting("crmExport")]);
+  const exportInfo = describeCrmExport(crmExport, month);
   // Spedite senza data di spedizione: il report le conta nel mese della data di ritiro.
   const countedByPickup = report.shipments.filter((s) => s.pickupDateUsed);
   const requestLink = (id: number, status: RequestStatus) =>
@@ -57,7 +93,7 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
   const prev = addMonths(month, -1);
   const next = addMonths(month, 1);
   const navLink = "inline-flex h-10 items-center rounded-lg px-3 text-sm font-medium ring-1 ring-inset ring-slate-300 bg-white text-slate-700 hover:bg-slate-50";
-  const csvHref = `/api/report/mq?mese=${month}`;
+  const exportHref = `/api/report/crm?mese=${month}`;
 
   return (
     <>
@@ -66,11 +102,11 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
         title="Report m² mensile"
         description="Metri quadrati di campioni spediti nel mese, per prodotto: il riepilogo da registrare nel CRM."
         actions={
-          <a href={csvHref} download className={buttonClasses("primary", "md")}>
+          <a href={exportHref} download className={buttonClasses("primary", "md")} aria-describedby="crm-export-info">
             <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
               <path d="M10 3v10m0 0l-4-4m4 4l4-4M4 16h12" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            Esporta CSV
+            {crmExport.format === "XLSX" ? "Esporta Excel" : "Esporta CSV"}
           </a>
         }
       />
@@ -105,6 +141,31 @@ export default async function M2ReportPage(props: PageProps<"/report/mq">) {
           {month !== current ? (
             <Link href="/report/mq" className="text-sm font-medium text-brand-700 hover:text-brand-900">
               Torna al mese corrente
+            </Link>
+          ) : null}
+        </div>
+
+        <div
+          id="crm-export-info"
+          className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 rounded-xl bg-white px-4 py-3 text-sm shadow-sm ring-1 ring-slate-200"
+        >
+          <div className="min-w-0">
+            <p className="text-slate-900">
+              <span className="font-medium">Export per il CRM:</span> {exportInfo.summary}
+            </p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {exportInfo.details} · {exportInfo.sending}
+            </p>
+            {crmExport.groupBy !== "PRODOTTO" ? (
+              <p className="mt-0.5 text-xs text-slate-500">
+                Il file è raggruppato {CRM_GROUP_BY_LABELS[crmExport.groupBy].toLowerCase()}: le righe non coincidono con la
+                tabella per prodotto qui sotto (i totali di m² e pezzi sì).
+              </p>
+            ) : null}
+          </div>
+          {can(user.role, "settings.manage") ? (
+            <Link href={CRM_SETTINGS_HREF} className="text-sm font-medium whitespace-nowrap text-brand-700 hover:text-brand-900">
+              Impostazioni → Export CRM
             </Link>
           ) : null}
         </div>

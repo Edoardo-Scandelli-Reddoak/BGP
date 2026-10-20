@@ -178,9 +178,9 @@ export async function importContacts(rows: RawRow[]): Promise<ImportSummary> {
 }
 
 /**
- * Importa/aggiorna il catalogo prodotti (codice + descrizione, facoltativi marchio e categoria).
+ * Importa/aggiorna il catalogo prodotti (codice + descrizione, facoltativi marchio, categoria e prezzo al m²).
  * I prodotti esistenti vengono riconosciuti dal codice (senza distinzione maiuscole) e riattivati.
- * Le celle vuote non cancellano descrizione, marchio o categoria già salvati.
+ * Le celle vuote (o, per il prezzo, non numeriche) non cancellano i valori già salvati.
  */
 export async function importProducts(rows: RawRow[]): Promise<ImportSummary> {
   const parsed = parseProductRows(rows);
@@ -192,12 +192,13 @@ export async function importProducts(rows: RawRow[]): Promise<ImportSummary> {
         description: products.description,
         brand: products.brand,
         category: products.category,
+        pricePerM2: products.pricePerM2,
         active: products.active,
       })
       .from(products);
     const byCode = new Map(existing.map((p) => [p.code.toUpperCase(), p]));
 
-    type ProductPatch = Partial<Pick<typeof products.$inferInsert, "description" | "brand" | "category">>;
+    type ProductPatch = Partial<Pick<typeof products.$inferInsert, "description" | "brand" | "category" | "pricePerM2">>;
     const toInsert: (typeof products.$inferInsert)[] = [];
     const toUpdate: { id: number; patch: ProductPatch }[] = [];
     const toReactivate: number[] = [];
@@ -205,13 +206,23 @@ export async function importProducts(rows: RawRow[]): Promise<ImportSummary> {
     for (const p of parsed.rows) {
       const cur = byCode.get(p.code.toUpperCase());
       if (!cur) {
-        toInsert.push({ code: p.code, description: p.description, brand: p.brand, category: p.category, active: true });
+        toInsert.push({
+          code: p.code,
+          description: p.description,
+          brand: p.brand,
+          category: p.category,
+          pricePerM2: p.pricePerM2 ?? null,
+          active: true,
+        });
         continue;
       }
       const patch: ProductPatch = {};
       if (p.description && cur.description !== p.description) patch.description = p.description;
       if (p.brand && cur.brand !== p.brand) patch.brand = p.brand;
       if (p.category && cur.category !== p.category) patch.category = p.category;
+      if (p.pricePerM2 !== undefined && (cur.pricePerM2 === null || Number(cur.pricePerM2) !== p.pricePerM2)) {
+        patch.pricePerM2 = p.pricePerM2;
+      }
       if (Object.keys(patch).length) toUpdate.push({ id: cur.id, patch });
       else if (!cur.active) toReactivate.push(cur.id);
       else unchanged++;
@@ -228,7 +239,7 @@ export async function importProducts(rows: RawRow[]): Promise<ImportSummary> {
       updated: toUpdate.length + toReactivate.length,
       unchanged,
       skipped: parsed.skipped,
-      warnings: [],
+      warnings: parsed.warnings ?? [],
     };
   });
 }

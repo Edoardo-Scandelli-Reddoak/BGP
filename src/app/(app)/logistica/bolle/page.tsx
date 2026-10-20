@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { Badge } from "@/components/ui/badge";
 import { buttonClasses, LinkButton } from "@/components/ui/button";
 import { Card, CardBody, CardHeader, DetailItem } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -13,10 +12,14 @@ import {
   PhoneNoticeValue,
   recipientOf,
 } from "@/components/logistica/delivery-info";
+import { BollaAutoReason, BollaStatusBadge } from "@/components/logistica/bolla-info";
+import { GenerateBollaButton } from "@/components/logistica/generate-bolla-button";
 import { formatBytes } from "@/components/logistica/utils";
 import { requireUser } from "@/lib/auth/session";
+import type { BollaMode } from "@/lib/config/bolla";
 import { parseEmailList } from "@/lib/email/recipients";
-import { formatCm, formatDate, formatKg, formatM2, formatNumber, LANGUAGE_LABELS, requestCode } from "@/lib/format";
+import { formatCm, formatDate, formatDateTime, formatKg, formatM2, formatNumber, LANGUAGE_LABELS, requestCode } from "@/lib/format";
+import { getSetting } from "@/lib/settings";
 import { listDeliveryForms, type DeliveryFormRow } from "../_lib/queries";
 
 export const metadata: Metadata = { title: "Bolle da preparare" };
@@ -30,7 +33,49 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
+/** Riferimenti della bolla per la descrizione della scheda: numero generato e/o DDT, secondo la modalità. */
+function bollaRefsText(r: DeliveryFormRow, mode: BollaMode): string {
+  const parts: string[] = [];
+  if (r.bollaNumber) parts.push(`Bolla N° ${r.bollaNumber}`);
+  if (r.ddtNumber && mode !== "GENERATA") parts.push(`DDT n. ${r.ddtNumber}`);
+  return parts.map((p) => ` · ${p}`).join("");
+}
+
+/**
+ * Azioni della scheda secondo la modalità della bolla: con la bolla generata dal sistema il PDF si
+ * scarica dopo «Genera bolla» (che assegna il numero); con il DDT del gestionale si apre la richiesta
+ * per inserirne numero o file.
+ */
+function CardActions({ r, mode }: { r: DeliveryFormRow; mode: BollaMode }) {
+  const pdfLink = (
+    <a
+      href={`/api/richieste/${r.id}/bolla`}
+      target="_blank"
+      rel="noopener"
+      className={buttonClasses(r.bollaReady ? "secondary" : "primary", "md", "w-full sm:w-auto")}
+    >
+      Scarica bolla PDF
+    </a>
+  );
+  const open = (
+    <LinkButton href={`/richieste/${r.id}`} variant={mode === "GESTIONALE" && !r.bollaReady ? "primary" : "secondary"} className="w-full sm:w-auto">
+      {mode === "GESTIONALE" && !r.bollaReady ? "Inserisci il DDT" : "Apri richiesta"}
+    </LinkButton>
+  );
+  if (mode === "GESTIONALE") return open;
+  const generate = r.bollaNumber ? null : (
+    <GenerateBollaButton requestId={r.id} variant={mode === "GENERATA" && !r.bollaReady ? "primary" : "secondary"} className="w-full sm:w-auto" />
+  );
+  return (
+    <>
+      {mode === "GENERATA" && !r.bollaNumber ? null : pdfLink}
+      {generate}
+      {open}
+    </>
+  );
+}
+
+function DeliveryFormCard({ r, mode }: { r: DeliveryFormRow; mode: BollaMode }) {
   const code = requestCode(r.id);
   const emails = parseEmailList(r.contact.email);
   const recipient = recipientOf(r, r.contact.name);
@@ -43,27 +88,19 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
           <span className="flex flex-wrap items-center gap-2">
             <span>{code}</span>
             <span className="font-normal text-slate-500">·</span>
-            <span>{recipient}</span>
-            {r.bollaReady ? <Badge tone="green">Bolla pronta</Badge> : <Badge tone="amber">Da preparare</Badge>}
+            <span className="min-w-0 break-words">{recipient}</span>
+            <BollaStatusBadge required ready={r.bollaReady} />
             <PhoneNoticeBadge phoneNotice={r.phoneNotice} number={r.phoneNoticeNumber} />
           </span>
         }
-        description={`Ricevuta il ${formatDate(r.receivedAt)}${r.ddtNumber ? ` · DDT n. ${r.ddtNumber}` : ""}`}
-        actions={
+        description={
           <>
-            <a
-              href={`/api/richieste/${r.id}/bolla`}
-              target="_blank"
-              rel="noopener"
-              className={buttonClasses("primary", "md", "w-full sm:w-auto")}
-            >
-              Scarica bolla PDF
-            </a>
-            <LinkButton href={`/richieste/${r.id}`} className="w-full sm:w-auto">
-              Apri richiesta
-            </LinkButton>
+            Ricevuta il {formatDate(r.receivedAt)}
+            {bollaRefsText(r, mode)}
+            <BollaAutoReason reason={r.deliveryFormAutoReason} className="mt-0.5" />
           </>
         }
+        actions={<CardActions r={r} mode={mode} />}
       />
       <CardBody className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <Block title="Cessionario (contatto)">
@@ -137,21 +174,36 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
             <DetailItem label="Pezzi misurati">{r.piecesCount || ""}</DetailItem>
             <DetailItem label="Corriere">{r.carrier?.name}</DetailItem>
             <DetailItem label="Data di ritiro">{formatDate(r.pickupDate)}</DetailItem>
-            <DetailItem label="Numero DDT">{r.ddtNumber}</DetailItem>
-            <DetailItem label="DDT caricato">
-              {r.ddtAttachment ? (
-                <a
-                  href={`/api/richieste/${r.id}/ddt`}
-                  target="_blank"
-                  rel="noopener"
-                  className="break-all text-brand-700 hover:underline"
-                >
-                  {r.ddtAttachment.fileName} ({formatBytes(r.ddtAttachment.sizeBytes)})
-                </a>
-              ) : null}
-            </DetailItem>
+            {mode !== "GESTIONALE" || r.bollaNumber ? (
+              <DetailItem label="Bolla generata" className="col-span-2">
+                {r.bollaNumber ? (
+                  <>
+                    N° {r.bollaNumber}
+                    {r.bollaGeneratedAt ? <span className="text-xs text-slate-500"> · il {formatDateTime(r.bollaGeneratedAt)}</span> : null}
+                  </>
+                ) : null}
+              </DetailItem>
+            ) : null}
+            {mode !== "GENERATA" || r.ddtNumber ? <DetailItem label="Numero DDT">{r.ddtNumber}</DetailItem> : null}
+            {mode !== "GENERATA" || r.ddtAttachment ? (
+              <DetailItem label="DDT caricato">
+                {r.ddtAttachment ? (
+                  <a
+                    href={`/api/richieste/${r.id}/ddt`}
+                    target="_blank"
+                    rel="noopener"
+                    className="break-all text-brand-700 hover:underline"
+                  >
+                    {r.ddtAttachment.fileName} ({formatBytes(r.ddtAttachment.sizeBytes)})
+                  </a>
+                ) : null}
+              </DetailItem>
+            ) : null}
           </dl>
-          {r.deliveryFormReady ? <p className="pt-2 text-xs text-emerald-700">Segnata come «bolla pronta».</p> : null}
+          {/* «Bolla pronta» conta solo con «Entrambe» (o, con la bolla generata, senza numero: dato precedente). */}
+          {r.deliveryFormReady && !r.bollaNumber && mode !== "GESTIONALE" ? (
+            <p className="pt-2 text-xs text-emerald-700">Segnata come «bolla pronta».</p>
+          ) : null}
         </Block>
       </CardBody>
 
@@ -174,7 +226,8 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
               return (
                 <TR key={item.id}>
                   <TD className="font-mono text-xs whitespace-nowrap">{item.product.code}</TD>
-                  <TD className="whitespace-nowrap font-medium">
+                  {/* Il formato «Altro: …» può avere una nota lunga: va a capo invece di allargare la tabella. */}
+                  <TD className="min-w-32 max-w-56 font-medium break-words">
                     <ItemFormat item={item} />
                   </TD>
                   <TD className="min-w-72">
@@ -232,9 +285,17 @@ function DeliveryFormCard({ r }: { r: DeliveryFormRow }) {
   );
 }
 
+/** Come si prepara la bolla, secondo la modalità (Impostazioni → Bolla di consegna). */
+const MODE_HINTS: Record<BollaMode, string> = {
+  GENERATA: "La bolla si genera dal sistema con un numero progressivo.",
+  GESTIONALE: "La bolla è il DDT del gestionale: inseriscine numero o file nella richiesta.",
+  ENTRAMBE: "Genera la bolla dal sistema oppure usa il DDT del gestionale.",
+};
+
 export default async function DeliveryFormsPage() {
   await requireUser("logistics.work");
-  const rows = await listDeliveryForms();
+  const { mode } = await getSetting("bollaConfig");
+  const rows = await listDeliveryForms(mode);
   // Prima quelle ancora da preparare, poi le pronte (ciascun gruppo dalla più vecchia).
   const sorted = [...rows.filter((r) => !r.bollaReady), ...rows.filter((r) => r.bollaReady)];
   const todo = rows.length - rows.filter((r) => r.bollaReady).length;
@@ -246,8 +307,8 @@ export default async function DeliveryFormsPage() {
         title="Bolle da preparare"
         description={
           rows.length
-            ? `Richieste pronte per il ritiro con «bolla di consegna richiesta»: ${todo} da preparare, ${rows.length - todo} già pronte.`
-            : "Richieste pronte per il ritiro per cui il back office ha chiesto la bolla di consegna."
+            ? `Richieste pronte per il ritiro con «bolla di consegna richiesta»: ${todo} da preparare, ${rows.length - todo} già pronte. ${MODE_HINTS[mode]}`
+            : "Richieste pronte per il ritiro per cui serve la bolla di consegna (chiesta dal back office o dalle regole in Impostazioni)."
         }
       />
       {sorted.length === 0 ? (
@@ -260,7 +321,7 @@ export default async function DeliveryFormsPage() {
       ) : (
         <div className="space-y-6">
           {sorted.map((r) => (
-            <DeliveryFormCard key={r.id} r={r} />
+            <DeliveryFormCard key={r.id} r={r} mode={mode} />
           ))}
         </div>
       )}

@@ -6,11 +6,13 @@ import { cn } from "@/components/ui/cn";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { BollaRefs } from "@/components/logistica/bolla-info";
 import { PhoneNoticeBadge, RecipientSummary, recipientOf } from "@/components/logistica/delivery-info";
 import { ShippingCostForm } from "@/components/logistica/shipping-cost-form";
 import { requireUser } from "@/lib/auth/session";
 import { parseEmailList } from "@/lib/email/recipients";
 import { formatDate, formatDateTime, requestCode } from "@/lib/format";
+import { getSetting } from "@/lib/settings";
 import {
   countCompletedWithoutCost,
   listRecentlyCompleted,
@@ -89,10 +91,11 @@ export default async function ShippedPage(props: PageProps<"/logistica/spedite">
   const sp = await props.searchParams;
   const missingCostOnly = sp.costo === "mancante";
 
-  const [shipped, completed, withoutCost] = await Promise.all([
+  const [shipped, completed, withoutCost, { mode }] = await Promise.all([
     listShippedAwaitingTracking(),
     listRecentlyCompleted({ missingCostOnly }),
     countCompletedWithoutCost(),
+    getSetting("bollaConfig"),
   ]);
 
   return (
@@ -144,9 +147,10 @@ export default async function ShippedPage(props: PageProps<"/logistica/spedite">
                           <RecipientSummary r={r} contactName={r.contactName} />
                           <PhoneNoticeBadge phoneNotice={r.phoneNotice} number={r.phoneNoticeNumber} className="mt-1.5" />
                         </TD>
-                        <TD className="whitespace-nowrap">
-                          <p>{r.carrierName ?? "—"}</p>
-                          {r.pickupDate ? <p className="text-xs text-slate-500">Ritiro il {formatDate(r.pickupDate)}</p> : null}
+                        <TD className="max-w-48">
+                          <p className="whitespace-nowrap">{r.carrierName ?? "—"}</p>
+                          {r.pickupDate ? <p className="text-xs whitespace-nowrap text-slate-500">Ritiro il {formatDate(r.pickupDate)}</p> : null}
+                          <BollaRefs bollaNumber={r.bollaNumber} ddtNumber={r.ddtNumber} mode={mode} className="mt-1" />
                         </TD>
                         <TD>
                           <MissingBadges r={r} />
@@ -177,6 +181,7 @@ export default async function ShippedPage(props: PageProps<"/logistica/spedite">
                         </span>
                         {r.shippedAt ? <span>{markedShippedLabel(r)}</span> : null}
                       </div>
+                      <BollaRefs bollaNumber={r.bollaNumber} ddtNumber={r.ddtNumber} mode={mode} className="mt-1" />
                       <div className="mt-2">
                         <MissingBadges r={r} />
                       </div>
@@ -236,9 +241,10 @@ export default async function ShippedPage(props: PageProps<"/logistica/spedite">
                         </TD>
                         <TD className="min-w-40 font-medium text-slate-900">{r.contactName}</TD>
                         <TD className="whitespace-nowrap">{r.carrierName ?? "—"}</TD>
-                        <TD className="whitespace-nowrap">
-                          <p>{r.shipmentDate ? formatDate(r.shipmentDate) : "—"}</p>
-                          {r.trackingNumber ? <p className="font-mono text-xs text-slate-500">{r.trackingNumber}</p> : null}
+                        <TD className="max-w-48">
+                          <p className="whitespace-nowrap">{r.shipmentDate ? formatDate(r.shipmentDate) : "—"}</p>
+                          {r.trackingNumber ? <p className="font-mono text-xs break-all text-slate-500">{r.trackingNumber}</p> : null}
+                          <BollaRefs bollaNumber={r.bollaNumber} ddtNumber={r.ddtNumber} mode={mode} className="mt-1" />
                         </TD>
                         <TD>
                           <ConfirmationBadge sent={r.notificationSentAt !== null} />
@@ -270,6 +276,7 @@ export default async function ShippedPage(props: PageProps<"/logistica/spedite">
                       <span>{r.shipmentDate ? `Spedita il ${formatDate(r.shipmentDate)}` : "Data di spedizione non indicata"}</span>
                       {r.trackingNumber ? <span className="font-mono break-all">{r.trackingNumber}</span> : null}
                     </div>
+                    <BollaRefs bollaNumber={r.bollaNumber} ddtNumber={r.ddtNumber} mode={mode} className="mt-1" />
                     <div className="mt-3">
                       <p className="mb-1 text-xs font-medium text-slate-500">Costo spedizione</p>
                       <ShippingCostForm requestId={r.id} cost={r.shippingCost} version={r.updatedAt.toISOString()} />

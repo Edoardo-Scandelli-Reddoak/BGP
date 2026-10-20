@@ -4,6 +4,7 @@ import type { WarehouseCard } from "@/app/(app)/magazzino/queries";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { cn } from "@/components/ui/cn";
 import { daysSince, formatDateTime, formatKg, formatM2, requestCode } from "@/lib/format";
+import { sampleFormatText } from "@/lib/sample-formats";
 import { destinationCity, waitingLabel } from "./format";
 import { SampleFormatLabel } from "./sample-format-label";
 
@@ -102,11 +103,16 @@ export function QueueCard({ card }: { card: WarehouseCard }) {
         {card.items.map((item) => (
           <li key={item.id} className="flex min-w-0 items-baseline gap-2 text-sm">
             <span className="w-9 shrink-0 text-right text-base font-bold tabular-nums text-slate-900">{item.quantity}×</span>
-            {/* «2× MEZZE DOGHE · CODICE — descrizione»: il formato prima di tutto, è ciò che si prepara. */}
-            <span className="line-clamp-2 min-w-0 leading-6">
-              <SampleFormatLabel format={item.sampleFormat} note={item.formatNote} />{" "}
-              <span className="font-mono font-semibold text-slate-900">{item.code}</span>
-              {item.description ? <span className="text-slate-500"> — {item.description}</span> : null}
+            {/* «2× MEZZE DOGHE» e sotto «CODICE — descrizione»: il formato prima di tutto, è ciò che si prepara.
+                Formato e codice su righe separate: una nota di formato lunga si accorcia senza nascondere il codice. */}
+            <span className="min-w-0 flex-1 leading-6">
+              <span className="line-clamp-2 block" title={sampleFormatText(item.sampleFormat, item.formatNote) || undefined}>
+                <SampleFormatLabel format={item.sampleFormat} note={item.formatNote} />
+              </span>
+              <span className="block truncate" title={item.description ? `${item.code} — ${item.description}` : undefined}>
+                <span className="font-mono font-semibold text-slate-900">{item.code}</span>
+                {item.description ? <span className="text-slate-500"> — {item.description}</span> : null}
+              </span>
             </span>
           </li>
         ))}

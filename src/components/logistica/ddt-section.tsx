@@ -23,12 +23,15 @@ export function DdtSection({
   requestId,
   ddt,
   editable,
+  canUpload = editable,
   confirmationSent,
   completed,
 }: {
   requestId: number;
   ddt: DdtFileInfo | null;
   editable: boolean;
+  /** Caricamento disponibile (no con la sola bolla generata dal sistema: resta solo «Rimuovi»). */
+  canUpload?: boolean;
   /** Conferma di spedizione già inviata: un DDT caricato ora arriva al cliente solo con un nuovo invio. */
   confirmationSent: boolean;
   /** Richiesta completata (con o senza conferma email). */
@@ -72,13 +75,13 @@ export function DdtSection({
             ) : null}
           </div>
         </div>
-      ) : (
+      ) : canUpload ? (
         <p className="text-sm text-slate-500">Nessun DDT caricato.</p>
-      )}
+      ) : null}
       {/* Dopo un nuovo caricamento il vecchio «DDT rimosso» non serve più. */}
       {remove.state && (!remove.state.ok || !ddt) ? <ActionMessage state={remove.state} /> : null}
 
-      {editable ? (
+      {editable && canUpload ? (
         <form onSubmit={upload.onSubmit} className="space-y-2" key={ddt?.id ?? "nessuno"}>
           <label htmlFor={inputId} className="block text-sm font-medium text-slate-700">
             {ddt ? "Sostituisci il DDT" : "Carica il DDT"}

@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { requireUser } from "@/lib/auth/session";
 import { todayIso } from "@/lib/format";
 import { can } from "@/lib/roles";
+import { getSetting } from "@/lib/settings";
 import { parseDbId } from "@/lib/validation";
 
 export const metadata: Metadata = { title: "Nuova richiesta" };
@@ -43,7 +44,10 @@ export default async function NuovaRichiestaPage({ searchParams }: PageProps<"/r
   const { contatto } = await searchParams;
   // Id fuori dai limiti di Postgres → «contatto non trovato», mai un errore del database.
   const contactId = parseDbId(Array.isArray(contatto) ? contatto[0] : contatto);
-  const contact = contactId ? await loadContact(contactId) : null;
+  const [contact, bollaConfig] = await Promise.all([
+    contactId ? loadContact(contactId) : null,
+    getSetting("bollaConfig"),
+  ]);
   const contactNotFound = contatto !== undefined && !contact;
   const prefill = contact ? contactPrefill(contact) : EMPTY_PREFILL;
   const today = todayIso();
@@ -74,6 +78,7 @@ export default async function NuovaRichiestaPage({ searchParams }: PageProps<"/r
           <RequestForm
             mode="create"
             today={today}
+            bollaRules={bollaConfig.rules}
             newContactHref={
               can(user.role, "registry.edit")
                 ? `/anagrafiche/contatti/nuovo?ritorno=${encodeURIComponent("/richieste/nuova")}`
@@ -81,10 +86,11 @@ export default async function NuovaRichiestaPage({ searchParams }: PageProps<"/r
             }
             initial={{
               contact,
-              // Stessa precompilazione della scelta del contatto nel form (destinatario, indirizzo, telefono).
+              // Stessa precompilazione della scelta del contatto nel form (destinatario, indirizzo, paese, telefono).
               recipientName: prefill.recipientName,
               attentionOf: "",
               destinationAddress: prefill.destinationAddress,
+              destinationCountry: prefill.country,
               phoneNotice: null,
               phoneNoticeNumber: prefill.phone,
               notes: "",

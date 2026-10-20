@@ -78,6 +78,8 @@ function readRequestInfo(formData: FormData): RequestInfoInput | null {
     recipientName: text(formData, "recipientName"),
     attentionOf: text(formData, "attentionOf"),
     destinationAddress: text(formData, "destinationAddress"),
+    // Vuoto = paese del contatto (lo decide il servizio).
+    destinationCountry: text(formData, "destinationCountry"),
     phoneNotice,
     // Con «No» il numero non serve (il servizio lo azzera comunque).
     phoneNoticeNumber: phoneNotice ? text(formData, "phoneNoticeNumber") : null,

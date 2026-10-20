@@ -21,6 +21,7 @@ import { likePattern } from "@/lib/search";
 import { getSettings } from "@/lib/settings";
 import { dbId } from "@/lib/validation";
 import { mergeItems, normalizeMultiline, optionalText } from "./input";
+import { applyBollaRules } from "./service";
 
 /**
  * Richieste dal modulo pubblico /richiedi-campioni (senza login).
@@ -29,6 +30,7 @@ import { mergeItems, normalizeMultiline, optionalText } from "./input";
  * Le differenze rispetto all'anagrafica (indirizzo, email del cliente) finiscono nelle note.
  * Il modulo chiede tutti i dati che BGP richiede per prendere in carico una richiesta (destinatario,
  * alla c.a., indirizzo, codice, formato e quantità, preavviso telefonico), così arriva già completa.
+ * Le regole della bolla (Impostazioni → Bolla di consegna) valgono anche qui, come per il back office.
  */
 
 export const PUBLIC_MAX_PRODUCTS = 30;
@@ -123,6 +125,9 @@ const publicItemInput = z
     message: "Descrivi il formato richiesto",
   });
 
+/** Cifre di un numero di telefono (stessa soglia del servizio interno: almeno 6). */
+const phoneDigits = (v: string | null | undefined) => v?.replace(/\D/g, "").length ?? 0;
+
 /** Valore già letto come oggetto (per i controlli tra campi anche quando altri campi sono errati). */
 const isObjectPayload = (p: { value: unknown }) => typeof p.value === "object" && p.value !== null;
 
@@ -182,12 +187,17 @@ export const publicRequestInput = z.object({
   // Controlli tra campi eseguiti anche se altri campi sono errati: tutti gli errori in un solo invio.
   .refine((v) => v.recipientIsPrivate === true || Boolean(v.attentionOf), {
     path: ["attentionOf"],
-    message: "Indica la persona a cui è destinata, oppure spunta «Il destinatario è un privato»",
+    message: "Indica la persona a cui sono destinati i campioni, oppure spunta «Il destinatario è un privato»",
     when: isObjectPayload,
   })
   .refine((v) => v.phoneNotice !== true || Boolean(v.phoneNoticeNumber), {
     path: ["phoneNoticeNumber"],
     message: "Indica il numero di telefono per il preavviso",
+    when: isObjectPayload,
+  })
+  .refine((v) => v.phoneNotice !== true || !v.phoneNoticeNumber || phoneDigits(v.phoneNoticeNumber) >= 6, {
+    path: ["phoneNoticeNumber"],
+    message: "Numero di telefono non valido: indica il numero completo (almeno 6 cifre)",
     when: isObjectPayload,
   });
 
@@ -240,6 +250,7 @@ type MatchedContact = {
   language: Language;
   needsReview: boolean;
   defaultAddress: string | null;
+  country: string | null;
 };
 
 const matchColumns = {
@@ -249,6 +260,7 @@ const matchColumns = {
   language: contacts.language,
   needsReview: contacts.needsReview,
   defaultAddress: contacts.defaultAddress,
+  country: contacts.country,
 };
 
 async function findContactByEmail(
@@ -301,11 +313,6 @@ function sameAddress(a: string, b: string): boolean {
   if (x === y) return true;
   const [short, long] = x.length <= y.length ? [x, y] : [y, x];
   return short.length >= 10 && long.includes(short);
-}
-
-function withCountry(address: string, country: string | null): string {
-  if (!country || address.toLowerCase().includes(country.toLowerCase())) return address;
-  return `${address}\n${country}`;
 }
 
 const SPAM_RESULT: ActionResult<PublicRequestResult> = {
@@ -488,6 +495,15 @@ export async function createPublicRequest(
     }
     const notes = [input.notes, meta.join("\n")].filter(Boolean).join("\n\n") || null;
 
+    // Paese di consegna in un campo a parte (l'indirizzo resta com'è stato scritto); se non indicato
+    // vale quello del contatto, come nel back office. Le regole della bolla si applicano subito.
+    const destinationCountry = input.country ?? contact.country;
+    const bolla = applyBollaRules(
+      false,
+      { destinationCountry, itemFormats: items.map((i) => i.sampleFormat), packagesCount: null },
+      settings.bollaConfig,
+    );
+
     const [request] = await tx
       .insert(sampleRequests)
       .values({
@@ -496,11 +512,12 @@ export async function createPublicRequest(
         contactId: contact.id,
         recipientName,
         attentionOf,
-        destinationAddress: withCountry(input.address, input.country),
+        destinationAddress: input.address,
+        destinationCountry,
         phoneNotice: input.phoneNotice,
         phoneNoticeNumber: input.phoneNotice ? input.phoneNoticeNumber : null,
         notes,
-        deliveryFormRequired: false,
+        ...bolla,
         requesterName: input.requesterName,
         requesterEmail: input.requesterEmail,
         requesterIp,

@@ -37,6 +37,22 @@ function PhoneNotice({ request, editable }: { request: RequestDetail; editable: 
   );
 }
 
+/** Bolla richiesta o no; se l'hanno resa obbligatoria le regole (Impostazioni → Bolla di consegna), il motivo. */
+function BollaInfo({ request }: { request: RequestDetail }) {
+  if (!request.deliveryFormRequired) return <span className="text-slate-600">Non richiesta</span>;
+  const reason = request.deliveryFormAutoReason?.trim();
+  const number = request.bollaNumber?.trim();
+  return (
+    <span className="flex flex-col items-start gap-1">
+      <span className="flex flex-wrap items-center gap-2">
+        <Badge tone="amber">Richiesta</Badge>
+        {number ? <span className="font-medium tabular-nums">N. {number}</span> : null}
+      </span>
+      {reason ? <span className="text-xs text-slate-600">Richiesta automaticamente: {reason}.</span> : null}
+    </span>
+  );
+}
+
 /** Contenuto in sola lettura del pannello «Richiesta» (contatto, destinatario e consegna, note, prodotti). */
 export function RequestInfoView({ request, canViewRegistry }: { request: RequestDetail; canViewRegistry: boolean }) {
   const { contact } = request;
@@ -47,7 +63,8 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
   const itemsEditable = EDITABLE_IN.items.includes(request.status);
   const recipient = request.recipientName?.trim();
   const attention = request.attentionOf?.trim();
-  // I m² sono misurati per prodotto: con lo stesso prodotto in più formati si mostrano sulla prima riga.
+  // I m² sono misurati per prodotto: con lo stesso prodotto in più formati si mostrano sulla prima riga
+  // (le altre righe rimandano a quella, solo se il prodotto ha davvero pezzi misurati).
   const m2Shown = new Set<number>();
 
   return (
@@ -105,15 +122,14 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
               <ToBeProvided editable={infoEditable} />
             )}
           </DetailItem>
+          <DetailItem label="Paese di consegna">
+            {request.destinationCountry?.trim() ? request.destinationCountry.trim() : null}
+          </DetailItem>
           <DetailItem label="Preavviso telefonico">
             <PhoneNotice request={request} editable={infoEditable} />
           </DetailItem>
           <DetailItem label="Bolla di consegna">
-            {request.deliveryFormRequired ? (
-              <Badge tone="amber">Richiesta</Badge>
-            ) : (
-              <span className="text-slate-600">Non richiesta</span>
-            )}
+            <BollaInfo request={request} />
           </DetailItem>
           <DetailItem label="Note">
             {request.notes ? <span className="whitespace-pre-line">{request.notes}</span> : null}
@@ -149,9 +165,10 @@ export function RequestInfoView({ request, canViewRegistry }: { request: Request
               </THead>
               <TBody>
                 {request.items.map((item) => {
-                  const repeated = m2Shown.has(item.productId);
+                  const measured = request.m2ByProduct.get(item.productId);
+                  const repeated = measured !== undefined && m2Shown.has(item.productId);
                   m2Shown.add(item.productId);
-                  const m2 = repeated ? undefined : request.m2ByProduct.get(item.productId);
+                  const m2 = repeated ? undefined : measured;
                   const format = sampleFormatText(item.sampleFormat, item.formatNote);
                   return (
                     <TR key={item.id}>

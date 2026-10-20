@@ -12,6 +12,7 @@ import {
   completeWithoutEmail,
   DDT_MAX_BYTES,
   deleteDdt,
+  generateBolla,
   resendShipmentConfirmation,
   updateLogisticsData,
   uploadDdt,
@@ -33,6 +34,31 @@ function readCost(formData: FormData): number | null | undefined {
   const n = parseDecimal(text(formData, "shippingCost"));
   if (n === null) return null;
   return Number.isNaN(n) ? undefined : Math.round(n * 100) / 100;
+}
+
+/** Prefisso dei campi delle voci di costo manuali nel form: "extraCost.<chiave>". */
+const EXTRA_COST_PREFIX = "extraCost.";
+const MAX_COST = 100_000;
+
+/**
+ * Importi delle voci di costo manuali (Impostazioni → Costi) presenti nel form; campo vuoto = 0.
+ * undefined se il form non ne contiene (nessuna voce attiva): i valori salvati restano invariati.
+ */
+function readExtraCosts(formData: FormData): { values?: Record<string, number>; errors: Record<string, string> } {
+  const values: Record<string, number> = {};
+  const errors: Record<string, string> = {};
+  let found = false;
+  for (const [name, raw] of formData.entries()) {
+    if (!name.startsWith(EXTRA_COST_PREFIX) || typeof raw !== "string") continue;
+    found = true;
+    const key = name.slice(EXTRA_COST_PREFIX.length);
+    const n = parseDecimal(raw);
+    if (n === null) values[key] = 0;
+    else if (Number.isNaN(n) || n < 0) errors[name] = "Importo non valido (es. 12,50)";
+    else if (n > MAX_COST) errors[name] = "Importo troppo alto";
+    else values[key] = Math.round(n * 100) / 100;
+  }
+  return { values: found ? values : undefined, errors };
 }
 
 function done(result: ActionResult): ActionResult {
@@ -66,8 +92,12 @@ export async function saveLogisticsData(id: number, _prev: State, formData: Form
   }
 
   const shippingCost = readCost(formData);
-  if (shippingCost === undefined) {
-    return fail("Controlla i campi evidenziati.", { shippingCost: "Importo non valido (es. 12,50)" });
+  const extra = readExtraCosts(formData);
+  if (shippingCost === undefined || Object.keys(extra.errors).length) {
+    return fail("Controlla i campi evidenziati.", {
+      ...(shippingCost === undefined ? { shippingCost: "Importo non valido (es. 12,50)" } : {}),
+      ...extra.errors,
+    });
   }
   const input: LogisticsInput = {
     carrierId: text(formData, "carrierId"),
@@ -76,6 +106,7 @@ export async function saveLogisticsData(id: number, _prev: State, formData: Form
     shipmentDate: text(formData, "shipmentDate"),
     ddtNumber: text(formData, "ddtNumber"),
     shippingCost,
+    extraCosts: extra.values,
     logisticsNotes: text(formData, "logisticsNotes"),
   };
   // La casella «Bolla pronta» c'è solo se la bolla è richiesta: senza il campo il valore non cambia.
@@ -92,6 +123,21 @@ export async function saveLogisticsData(id: number, _prev: State, formData: Form
     return fail(`Dati salvati, ma la richiesta non è stata segnata come spedita. ${shipped.error}`);
   }
   return shipped;
+}
+
+/**
+ * «Genera bolla»: assegna il prossimo numero progressivo (Impostazioni → Bolla di consegna) e la
+ * segna pronta. Idempotente: se la bolla ha già un numero non ne consuma un altro.
+ */
+export async function generateDeliveryForm(id: number, _prev: State, _formData: FormData): Promise<ActionResult> {
+  void _formData;
+  const user = await getAuthorizedUser("logistics.work");
+  if (!user) return NOT_AUTHORIZED;
+  // L'id arriva dal client (argomento legato con bind): va normalizzato, non solo controllato.
+  const safeId = parseDbId(id);
+  if (!safeId) return fail("Richiesta non valida.");
+  const result = await generateBolla(user, safeId);
+  return done(result.ok ? { ok: true, message: result.message } : result);
 }
 
 /** Riconosce il formato dal contenuto del file (non ci si fida di estensione e tipo dichiarato). */

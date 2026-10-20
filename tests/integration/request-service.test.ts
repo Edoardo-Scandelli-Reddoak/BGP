@@ -1226,19 +1226,20 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
         { code: a.code, format: "ALTRO", note: "listello 30 cm" },
         { code: b.code, format: null, note: null },
       ]);
+      // Separatore « | »: le descrizioni dei formati («Altro: …») possono contenere virgole.
       expect(exports.historyProductsText(row.productItems)).toBe(
-        `${a.code} (Mazzetta), ${a.code} (Altro: listello 30 cm), ${b.code}`,
+        `${a.code} — Mazzetta | ${a.code} — Altro: listello 30 cm | ${b.code}`,
       );
 
       const csv = exports.historyCsv(byRecipient);
       const [header, line] = csv.replace(/^\uFEFF/, "").split("\r\n");
       expect(header).toContain("Contatto;Destinatario;Alla c.a.;Agente;Paese;Prodotti;");
       expect(line).toContain(`${fx.contacts.noEmail.name};${fx.mark} DRVOTEK DOO;;`);
-      expect(line).toContain(`;${a.code} (Mazzetta), ${a.code} (Altro: listello 30 cm), ${b.code};`);
+      expect(line).toContain(`;${a.code} — Mazzetta | ${a.code} — Altro: listello 30 cm | ${b.code};`);
 
       const shipped = (await history.getHistoryForExport({ contatto: fx.contacts.noEmail.name })).find((r) => r.id === id);
       expect(exports.historyCsv(shipped ? [shipped] : [])).toContain(`;${RECIPIENT};${ATTENTION_OF};`);
-      expect(exports.historyCsv(shipped ? [shipped] : [])).toContain(`;${a.code} (Mezze doghe);`);
+      expect(exports.historyCsv(shipped ? [shipped] : [])).toContain(`;${a.code} — Mezze doghe;`);
 
       expectOk(await svc.deleteRequest(bo, twoFormats));
     });
