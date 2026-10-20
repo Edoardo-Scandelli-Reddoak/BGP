@@ -1,26 +1,40 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
+
+  /* Blu BGP (logo) e verde delle righe del marchio */
+  --color-brand-50: #eef3fb;
+  --color-brand-100: #d9e3f5;
+  --color-brand-200: #b3c6ea;
+  --color-brand-300: #84a2d9;
+  --color-brand-400: #5479c2;
+  --color-brand-500: #345aa8;
+  --color-brand-600: #24458c;
+  --color-brand-700: #1d3871;
+  --color-brand-800: #182d5a;
+  --color-brand-900: #132345;
+  --color-brand-950: #0b1630;
+
+  --color-accent-500: #4a9a3c;
+  --color-accent-600: #3b7f30;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
   }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+  /* Input numerici senza frecce: in magazzino si digita da telefono */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
 }

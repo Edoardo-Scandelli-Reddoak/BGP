@@ -1,0 +1,1 @@
+ALTER TABLE "sample_requests" ADD COLUMN "delivery_form_ready" boolean DEFAULT false NOT NULL;
