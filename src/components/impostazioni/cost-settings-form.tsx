@@ -505,16 +505,16 @@ function CostCalculator({ model, config, sample }: { model: Model; config: CostC
         }
       />
       <CardBody className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
           {input("packages", "Colli", "n.")}
           {input("kg", "Peso", "kg")}
           {input("m2", "Campioni", "m²")}
           {input("courier", "Costo corriere", "€")}
           {config.perM2.enabled && config.perM2.useProductPrice ? (
-            <div className="col-span-2">{input("productPrice", "Prezzo al m² del prodotto (se in anagrafica)", "€/m²", "vuoto = non indicato")}</div>
+            <div className="sm:col-span-2 lg:col-span-1 2xl:col-span-2">{input("productPrice", "Prezzo al m² del prodotto (se in anagrafica)", "€/m²", "vuoto = non indicato")}</div>
           ) : null}
           {enabledManual.map((m) => (
-            <div key={m.uid} className="col-span-2 space-y-1">
+            <div key={m.uid} className="space-y-1 sm:col-span-2 lg:col-span-1 2xl:col-span-2">
               <label htmlFor={`${id}-x-${m.uid}`} className="block text-xs font-medium text-slate-600">
                 {m.label || "Voce senza nome"} (inserita dalla logistica)
               </label>

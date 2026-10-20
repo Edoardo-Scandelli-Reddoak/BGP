@@ -59,7 +59,7 @@ export function StepperInput({
         value={value}
         onChange={(e) => onChange(e.target.value.replace(/\D/g, ""))}
         aria-invalid={invalid || undefined}
-        className="h-12 min-w-0 rounded-none text-center text-base! tabular-nums"
+        className="h-12 min-w-0 rounded-none px-1 text-center text-base! tabular-nums"
       />
       <button
         type="button"

@@ -128,7 +128,8 @@ function PieceFields({
         </Field>
       </div>
 
-      <div className="grid grid-cols-2 items-end gap-3">
+      {/* Più spazio al contatore (pulsanti − / + grandi) che all'anteprima dei m². */}
+      <div className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-end gap-3">
         <Field label="Quantità pezzi uguali" htmlFor={`${id}-qty`} error={fieldError(state, "quantity")}>
           <StepperInput
             id={`${id}-qty`}

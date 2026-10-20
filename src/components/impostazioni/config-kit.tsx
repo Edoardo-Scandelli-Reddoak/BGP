@@ -57,11 +57,12 @@ export function SaveBar({
             <p className="text-sm text-slate-500">Nessuna modifica da salvare.</p>
           )}
         </div>
-        <div className="flex gap-2 sm:ml-auto">
-          <Button variant="ghost" onClick={onReset} disabled={!dirty || pending} className="flex-1 sm:flex-none">
+        {/* Su telefono i pulsanti vanno uno sotto l'altro (le etichette sono lunghe), il salvataggio sopra. */}
+        <div className="flex flex-col-reverse gap-2 sm:ml-auto sm:flex-row">
+          <Button variant="ghost" onClick={onReset} disabled={!dirty || pending} className="w-full sm:w-auto">
             Annulla modifiche
           </Button>
-          <PendingButton pending={pending} pendingText="Salvataggio…" disabled={!dirty} className="flex-1 sm:flex-none">
+          <PendingButton pending={pending} pendingText="Salvataggio…" disabled={!dirty} className="w-full sm:w-auto">
             {saveLabel}
           </PendingButton>
         </div>
