@@ -70,3 +70,6 @@ export function previousStatus(status: RequestStatus): RequestStatus | null {
 export function isStatus(value: unknown): value is RequestStatus {
   return typeof value === "string" && (STATUS_ORDER as string[]).includes(value);
 }
+
+/** Stati in cui i campioni sono partiti: contano per m², costi e spedizioni nei report. */
+export const SHIPPED_STATUSES: RequestStatus[] = ["SPEDITA", "COMPLETATA"];

@@ -58,5 +58,5 @@ export function Pagination({
 /** Legge ?pagina=N in modo sicuro. */
 export function parsePage(value: string | string[] | undefined): number {
   const n = Number(Array.isArray(value) ? value[0] : value);
-  return Number.isInteger(n) && n > 0 ? n : 1;
+  return Number.isSafeInteger(n) && n > 0 && n <= 100_000 ? n : 1;
 }

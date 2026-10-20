@@ -112,3 +112,19 @@ export function parseDecimal(value: FormDataEntryValue | null | undefined): numb
 export function pieceAreaM2(lengthCm: number, widthCm: number, quantity = 1): number {
   return Math.round(((lengthCm * widthCm * quantity) / 10000) * 10000) / 10000;
 }
+
+/** Misura in cm: senza decimali se intera ("122"), altrimenti una cifra ("19,5"). */
+export function formatCm(value: number): string {
+  return formatNumber(value, Number.isInteger(value) ? 0 : 1);
+}
+
+/** Data (fuso di Roma) di un istante, formato YYYY-MM-DD. */
+export function romeIsoDate(value: Date): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE }).format(value);
+}
+
+/** Giorni di calendario (fuso di Roma) trascorsi da una data. */
+export function daysSince(value: Date, now: Date = new Date()): number {
+  const diff = dateFromIso(romeIsoDate(now)).getTime() - dateFromIso(romeIsoDate(value)).getTime();
+  return Math.max(0, Math.round(diff / 86_400_000));
+}
