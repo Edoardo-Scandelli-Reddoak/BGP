@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isItaly, normalizeCountry } from "@/lib/countries";
+import { isForeignCountry } from "@/lib/countries";
 import { SAMPLE_FORMATS, type SampleFormat } from "@/lib/sample-formats";
 
 /**
@@ -87,7 +87,7 @@ export function formatBollaNumber(n: number, year: number, config: Pick<BollaCon
  * L'Italia è riconosciuta in ogni forma («IT», «Italy», «ITALIA»…); un valore non riconosciuto conta come estero.
  */
 export function isAbroad(country: string | null | undefined): boolean {
-  return normalizeCountry(country) !== null && !isItaly(country);
+  return isForeignCountry(country);
 }
 
 export type BollaRuleInput = {

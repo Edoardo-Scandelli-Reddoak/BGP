@@ -16,7 +16,7 @@ import { BollaAutoReason, BollaStatusBadge } from "@/components/logistica/bolla-
 import { GenerateBollaButton } from "@/components/logistica/generate-bolla-button";
 import { formatBytes } from "@/components/logistica/utils";
 import { requireUser } from "@/lib/auth/session";
-import type { BollaMode } from "@/lib/config/bolla";
+import { isAbroad, type BollaMode } from "@/lib/config/bolla";
 import { parseEmailList } from "@/lib/email/recipients";
 import { formatCm, formatDate, formatDateTime, formatKg, formatM2, formatNumber, LANGUAGE_LABELS, requestCode } from "@/lib/format";
 import { getSetting } from "@/lib/settings";
@@ -146,6 +146,9 @@ function DeliveryFormCard({ r, mode }: { r: DeliveryFormRow; mode: BollaMode }) 
             <p className="text-xs text-amber-700">«Alla c.a.» non indicato: il destinatario sembra una ditta.</p>
           ) : null}
           <p className="whitespace-pre-line">{r.destinationAddress || "Indirizzo non indicato"}</p>
+          {isAbroad(r.destinationCountry) ? (
+            <p className="font-medium text-slate-700">Estero: {r.destinationCountry?.trim()}</p>
+          ) : null}
           <div className="pt-3">
             <p className="text-xs font-semibold text-slate-500">Preavviso telefonico</p>
             <p>

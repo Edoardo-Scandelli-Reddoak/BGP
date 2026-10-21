@@ -19,8 +19,9 @@ export type WarehouseCard = {
   /** Destinatario della spedizione (ragione sociale o cognome e nome) e «alla c.a. di». */
   recipientName: string | null;
   attentionOf: string | null;
-  /** Solo l'indirizzo (via, CAP, città, paese): il destinatario è in recipientName. */
+  /** Solo l'indirizzo (via, CAP, città): il destinatario è in recipientName, il paese in destinationCountry. */
   destinationAddress: string;
+  destinationCountry: string | null;
   notes: string | null;
   deliveryFormRequired: boolean;
   packagesCount: number | null;
@@ -54,6 +55,7 @@ async function loadCards(status: "IN_PREPARAZIONE" | "PRONTA_RITIRO", limit?: nu
       recipientName: true,
       attentionOf: true,
       destinationAddress: true,
+      destinationCountry: true,
       notes: true,
       deliveryFormRequired: true,
       packagesCount: true,
@@ -103,6 +105,7 @@ async function loadCards(status: "IN_PREPARAZIONE" | "PRONTA_RITIRO", limit?: nu
       recipientName: r.recipientName,
       attentionOf: r.attentionOf,
       destinationAddress: r.destinationAddress,
+      destinationCountry: r.destinationCountry,
       notes: r.notes,
       deliveryFormRequired: r.deliveryFormRequired,
       packagesCount: r.packagesCount,

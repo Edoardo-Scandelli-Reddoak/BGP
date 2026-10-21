@@ -12,7 +12,8 @@ import { clampLines, makeSanitizer, wrapText, type Sanitizer } from "./text";
  * intestazione aziendale, numero e data, causale, cessionario (il contatto) e luogo di
  * destinazione (destinatario, «alla c.a.», indirizzo di consegna), tabella articoli con il
  * formato del campione (anche su più pagine, con intestazione ripetuta), preavviso telefonico,
- * note, riquadro colli/aspetto/porto/peso/data/vettore e spazi per le firme.
+ * riquadro colli/aspetto/porto/peso/data/vettore e spazi per le firme. Le note della richiesta e
+ * delle righe sono interne (per l'ufficio, il magazzino e la logistica): sulla bolla non vanno.
  */
 
 const PAGE_W = 595.28;
@@ -23,8 +24,6 @@ const CONTENT_W = PAGE_W - 2 * MARGIN;
 const PAD = 6;
 const BODY_SIZE = 9;
 const LINE_H = 11.5;
-const NOTE_SIZE = 8;
-const NOTE_LINE_H = 10;
 
 /** Colonne della tabella articoli: Descrizione | U.M. | Quantità | m². */
 const COL_W = { um: 44, qty: 62, m2: 62 };
@@ -326,22 +325,12 @@ class BollaWriter {
       const format = sampleFormatText(item.sampleFormat, item.formatNote);
       const label = format ? `${format} — ${name}` : name;
       const descLines = clampLines(this.wrap(label, this.fonts.regular, BODY_SIZE, descW), 10, this.fonts.regular, BODY_SIZE, descW);
-      const noteLines = item.notes?.trim()
-        ? clampLines(this.wrap(`Nota: ${item.notes.trim()}`, this.fonts.italic, NOTE_SIZE, descW), 4, this.fonts.italic, NOTE_SIZE, descW)
-        : [];
-      const h = descLines.length * LINE_H + noteLines.length * NOTE_LINE_H + 6;
+      const h = descLines.length * LINE_H + 6;
       this.ensureSpace(h);
 
       const page = this.page;
       const first = this.y + 9;
       descLines.forEach((l, i) => this.text(page, l, COL_X.desc + PAD, first + i * LINE_H));
-      noteLines.forEach((l, i) =>
-        this.text(page, l, COL_X.desc + PAD, first + descLines.length * LINE_H + i * NOTE_LINE_H - 1, {
-          size: NOTE_SIZE,
-          font: this.fonts.italic,
-          color: C.muted,
-        }),
-      );
       this.textCenter(page, "CAD", COL_X.um + COL_W.um / 2, first);
       this.textRight(page, formatNumber(item.quantity, 0), COL_X.qty + COL_W.qty - PAD, first);
       const m2 = m2Shown.has(item.productId) ? undefined : detail.m2ByProduct.get(item.productId);
@@ -381,23 +370,6 @@ class BollaWriter {
       this.y += NOTICE_LINE_H;
     }
     this.y += 2;
-  }
-
-  /** Note della richiesta (istruzioni di consegna), nella colonna descrizione come sul DDT di BGP. */
-  drawNotes() {
-    const notes = this.detail.notes?.trim();
-    if (!notes) return;
-    const width = COL_DESC_W - 2 * PAD;
-    const lines = this.wrap(notes, this.fonts.regular, BODY_SIZE, width);
-    this.y += 6;
-    this.ensureSpace(12 + LINE_H);
-    this.text(this.page, "Note", COL_X.desc + PAD, this.y + 9, { size: 8, font: this.fonts.bold, color: C.brand });
-    this.y += 12;
-    for (const line of lines) {
-      this.ensureSpace(LINE_H);
-      if (line) this.text(this.page, line, COL_X.desc + PAD, this.y + 9);
-      this.y += LINE_H;
-    }
   }
 
   /** Riquadro con colli, aspetto, porto, peso, data, vettore e firme (ultima pagina). */
@@ -499,7 +471,6 @@ export async function generateBollaPdf(detail: RequestDetail, settings: AppSetti
   writer.newPage();
   writer.drawItems();
   writer.drawPhoneNotice();
-  writer.drawNotes();
   // Il riquadro finale va sull'ultima pagina: se non c'è spazio, se ne aggiunge una.
   if (writer.y + 4 > FOOTER_TOP - 8) writer.newPage();
   writer.drawFooter(writer.page);

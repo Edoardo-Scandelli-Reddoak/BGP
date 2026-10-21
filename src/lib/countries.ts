@@ -284,3 +284,33 @@ export function normalizeCountry(raw: string | null | undefined): string | null 
 export function isItaly(raw: string | null | undefined): boolean {
   return recognizeCountry(raw) === ITALY;
 }
+
+/** Paese estero: indicato e diverso dall'Italia (un valore non riconosciuto conta come estero). */
+export function isForeignCountry(raw: string | null | undefined): boolean {
+  return normalizeCountry(raw) !== null && !isItaly(raw);
+}
+
+/**
+ * Paese da aggiungere all'indirizzo di consegna (che ha via, CAP e città; il paese è in un campo a
+ * parte): solo se estero e non già scritto in una riga o dopo una virgola dell'indirizzo, in qualunque
+ * forma riconosciuta («Svizzera», «CH», «Switzerland»). null se non serve.
+ */
+export function countryForAddress(address: string | null | undefined, country: string | null | undefined): string | null {
+  if (!isForeignCountry(country)) return null;
+  const name = normalizeCountry(country)!;
+  const key = countryKey(name);
+  const known = recognizeCountry(country);
+  const inAddress = (address ?? "")
+    .split(/[\n,]/)
+    .map((s) => s.trim())
+    .some((s) => s && (countryKey(s) === key || (known !== null && recognizeCountry(s) === known)));
+  return inAddress ? null : name;
+}
+
+/** Indirizzo di consegna su una riga, con il paese se estero: «Via Nassa 5, 6900 Lugano, Svizzera». */
+export function oneLineAddress(address: string | null | undefined, country: string | null | undefined): string {
+  const line = (address ?? "").replace(/\s*\n\s*/g, ", ").trim();
+  const foreign = countryForAddress(address, country);
+  if (!foreign) return line;
+  return line ? `${line}, ${foreign}` : foreign;
+}

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { WarehouseCard } from "@/app/(app)/magazzino/queries";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { cn } from "@/components/ui/cn";
+import { countryForAddress } from "@/lib/countries";
 import { daysSince, formatDateTime, formatKg, formatM2, requestCode } from "@/lib/format";
 import { sampleFormatText } from "@/lib/sample-formats";
 import { destinationCity, waitingLabel } from "./format";
@@ -59,7 +60,8 @@ function recipientDetails(card: WarehouseCard, recipient: string): string {
 export function QueueCard({ card }: { card: WarehouseCard }) {
   const ready = card.status === "PRONTA_RITIRO";
   const days = daysSince(card.receivedAt);
-  const city = destinationCity(card.destinationAddress);
+  const foreign = countryForAddress(card.destinationAddress, card.destinationCountry);
+  const city = [destinationCity(card.destinationAddress), foreign].filter(Boolean).join(", ");
   const hasPackages = card.packagesCount !== null && card.packagesCount > 0;
   const hasWeight = card.weightKg !== null && card.weightKg > 0;
   const code = requestCode(card.id);

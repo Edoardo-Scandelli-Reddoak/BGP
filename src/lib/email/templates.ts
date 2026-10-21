@@ -72,7 +72,7 @@ export const PLACEHOLDERS: { key: keyof TemplateVars; label: string }[] = [
   { key: "prodotti", label: "Elenco prodotti con quantità e formato (una riga per prodotto)" },
   { key: "destinatario", label: "Destinatario (ragione sociale o cognome e nome)" },
   { key: "alla_ca", label: "Alla cortese attenzione di (persona presso la ditta)" },
-  { key: "destinazione", label: "Indirizzo di consegna" },
+  { key: "destinazione", label: "Indirizzo di consegna (con il paese se estero)" },
   { key: "preavviso", label: "Preavviso telefonico (es. «Sì, tel. 328 3556565» oppure «No»)" },
   { key: "note", label: "Note della richiesta" },
   { key: "bolla_richiesta", label: "Bolla di consegna richiesta (Sì/No)" },

@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   COUNTRIES,
   COUNTRY_NAMES,
+  countryForAddress,
   countryKey,
+  isForeignCountry,
   isItaly,
   ITALY,
   normalizeCountry,
+  oneLineAddress,
   recognizeCountry,
 } from "@/lib/countries";
 
@@ -192,5 +195,34 @@ describe("isItaly", () => {
     for (const v of ["San Marino", "SM", "Città del Vaticano", "Svizzera", "Frnce", "", null, undefined]) {
       expect(isItaly(v), String(v)).toBe(false);
     }
+  });
+});
+
+describe("paese accanto all'indirizzo di consegna", () => {
+  it("solo se estero", () => {
+    expect(isForeignCountry("CH")).toBe(true);
+    expect(isForeignCountry("Italy")).toBe(false);
+    expect(isForeignCountry("")).toBe(false);
+    expect(isForeignCountry("-")).toBe(false);
+    expect(countryForAddress("Via Roma 1\n24023 Clusone (BG)", "Italia")).toBeNull();
+    expect(countryForAddress("Via Roma 1\n24023 Clusone (BG)", null)).toBeNull();
+  });
+
+  it("aggiunge il paese estero se non è già nell'indirizzo, in qualunque forma", () => {
+    expect(countryForAddress("Via Nassa 5\n6900 Lugano", "CH")).toBe("Svizzera");
+    expect(countryForAddress("Via Nassa 5, 6900 Lugano, Svizzera", "Svizzera")).toBeNull();
+    expect(countryForAddress("1 High Street\nLondon W1 1AA\nUnited Kingdom", "Regno Unito")).toBeNull();
+    expect(countryForAddress("Via Nassa 5, 6900 Lugano, CH", "Svizzera")).toBeNull();
+    // il nome di una città non è il paese
+    expect(countryForAddress("Rue de Monaco 3, 75008 Paris", "Francia")).toBe("Francia");
+    // paese non riconosciuto: si mostra com'è
+    expect(countryForAddress("Main St 1, Springfield", "Freedonia")).toBe("Freedonia");
+  });
+
+  it("indirizzo su una riga per le email", () => {
+    expect(oneLineAddress("Via Nassa 5\n6900 Lugano", "Svizzera")).toBe("Via Nassa 5, 6900 Lugano, Svizzera");
+    expect(oneLineAddress("Via Roma 1\n24023 Clusone (BG)", "Italia")).toBe("Via Roma 1, 24023 Clusone (BG)");
+    expect(oneLineAddress("", "Svizzera")).toBe("Svizzera");
+    expect(oneLineAddress(null, null)).toBe("");
   });
 });

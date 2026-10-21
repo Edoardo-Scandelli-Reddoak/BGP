@@ -31,7 +31,7 @@ finché mancano e la pagina della richiesta elenca cosa manca; la bozza si può 
 |---|---|
 | **Ragione sociale** della ditta o **cognome e nome** del destinatario | «Destinatario», obbligatorio |
 | Se si spedisce a una ditta, la **persona** a cui è destinata | «Alla c.a.»: promemoria non bloccante quando il destinatario sembra una ditta (non sempre si può sapere) |
-| **Indirizzo** di consegna | Solo l'indirizzo: via, CAP, città, provincia, paese se estero |
+| **Indirizzo** di consegna | Solo l'indirizzo (via, CAP, città, provincia) più il «Paese di consegna» in un campo a parte |
 | **Codice** del prodotto | Una riga per prodotto (anche lo stesso prodotto in due formati) |
 | **Formato**: doghe intere, mezze doghe, mazzette, pannelli, espositore completo o solo culle… | Obbligatorio per ogni riga; «Altro» con descrizione. Proposto dal codice (MAZZ… mazzetta, PAN… pannello) |
 | **Quantità** | Per ogni riga |
@@ -40,8 +40,10 @@ finché mancano e la pagina della richiesta elenca cosa manca; la bozza si può 
 
 Il **modulo pubblico** chiede gli stessi dati, così le richieste di agenti e clienti arrivano già
 complete; lì «Alla c.a.» è obbligatorio a meno di spuntare «il destinatario è un privato».
-Destinatario, alla c.a., formato e preavviso compaiono nelle email al magazzino e alla logistica; la
-conferma al cliente riporta il formato nella lingua del cliente. Le richieste registrate prima di questa
+Destinatario, alla c.a., formato e preavviso compaiono nelle email al magazzino e alla logistica, con l'indirizzo
+seguito dal paese quando la consegna è all'estero (anche sulla scheda della coda magazzino); la conferma al cliente
+riporta il formato nella lingua del cliente. Le note della richiesta e delle righe restano interne (email al
+magazzino, pagine dell'app): sulla bolla generata non vengono stampate. Le richieste registrate prima di questa
 regola sono state migrate (la prima riga dell'indirizzo è diventata il destinatario; mazzette e pannelli
 hanno già il formato): se sono ancora «Nuova richiesta» vanno completate prima dell'invio.
 

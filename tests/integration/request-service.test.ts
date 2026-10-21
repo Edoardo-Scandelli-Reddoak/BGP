@@ -1,3 +1,4 @@
+import { inflateSync } from "node:zlib";
 import { and, asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { DB } from "@/db";
@@ -1288,4 +1289,61 @@ describe.skipIf(SKIP_REASON !== null)("servizio richieste (integrazione con il d
     }
     expect(counts.COMPLETATA).toBeGreaterThanOrEqual(4);
   });
+
+  describe("consegna all'estero: paese nelle email, bolla senza note", () => {
+    it("magazzino e logistica ricevono l'indirizzo con il paese; la bolla stampa il paese ma non le note", async () => {
+      const created = await svc.createRequest(
+        actor("BACKOFFICE"),
+        info(
+          fx.contacts.clienteIt.id,
+          [{ productId: fx.products.a.id, quantity: 1, sampleFormat: "MAZZETTA", notes: "NOTA-RIGA-INTERNA" }],
+          {
+            destinationAddress: "Via Nassa 5\n6900 Lugano",
+            destinationCountry: "CH",
+            deliveryFormRequired: true,
+            notes: "NOTA-UFFICIO-INTERNA",
+          },
+        ),
+        { sendToWarehouse: true },
+      );
+      const id = createdId(created);
+      expect((await getRequest(id)).destinationCountry).toBe("Svizzera");
+      const [warehouseMail] = await getEmails(id, "AVVISO_MAGAZZINO");
+      if (isDefaultTemplate("AVVISO_MAGAZZINO", "it")) {
+        expect(warehouseMail.body).toContain("Indirizzo: Via Nassa 5, 6900 Lugano, Svizzera");
+      }
+
+      expectOk(await svc.updateWarehouseData(actor("MAGAZZINO"), id, { packagesCount: 1, weightKg: 1.2 }));
+      expectOk(await svc.advanceStatus(actor("MAGAZZINO"), id, "PRONTA_RITIRO", { acknowledgeNoPieces: true }));
+      const [bollaMail] = await getEmails(id, "AVVISO_BOLLA");
+      if (isDefaultTemplate("AVVISO_BOLLA", "it")) {
+        expect(bollaMail.body).toContain("Indirizzo: Via Nassa 5, 6900 Lugano, Svizzera");
+      }
+
+      const { generateBollaPdf } = await import("@/lib/pdf/bolla");
+      const { getSettings } = await import("@/lib/settings");
+      const detail = await queries.getRequestDetail(id);
+      const text = pdfText(await generateBollaPdf(detail!, await getSettings()));
+      expect(text).toContain("SVIZZERA");
+      expect(text).toContain("Via Nassa 5");
+      expect(text).not.toContain("NOTA-UFFICIO-INTERNA");
+      expect(text).not.toContain("NOTA-RIGA-INTERNA");
+    });
+  });
 });
+
+/** Testo scritto nelle pagine del PDF (pdf-lib: stringhe esadecimali nei flussi compressi). */
+function pdfText(bytes: Uint8Array): string {
+  const raw = Buffer.from(bytes).toString("latin1");
+  const out: string[] = [];
+  for (const m of raw.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+    let content = m[1];
+    try {
+      content = inflateSync(Buffer.from(m[1], "latin1")).toString("latin1");
+    } catch {
+      // flusso non compresso
+    }
+    for (const t of content.matchAll(/<([0-9A-Fa-f]*)>\s*Tj/g)) out.push(Buffer.from(t[1], "hex").toString("latin1"));
+  }
+  return out.join("\n");
+}

@@ -4,6 +4,7 @@ import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { emailLog, emailTemplates, type ContactType, type EmailKind, type Language } from "@/db/schema";
+import { oneLineAddress } from "@/lib/countries";
 import { formatDate, formatNumber, requestCode } from "@/lib/format";
 import { sampleFormatText } from "@/lib/sample-formats";
 import { generateBollaPdf } from "@/lib/pdf/bolla";
@@ -81,7 +82,7 @@ export function buildTemplateVars(
     prodotti: productLines(detail, lang),
     destinatario: detail.recipientName?.trim() || detail.contact.name,
     alla_ca: detail.attentionOf?.trim() ?? "",
-    destinazione: detail.destinationAddress.replace(/\s*\n\s*/g, ", "),
+    destinazione: oneLineAddress(detail.destinationAddress, detail.destinationCountry),
     preavviso: phoneNoticeText(detail.phoneNotice, detail.phoneNoticeNumber, lang),
     note: detail.notes?.trim() ?? "",
     bolla_richiesta: YES_NO[lang][detail.deliveryFormRequired ? 0 : 1],
